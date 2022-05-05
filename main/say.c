@@ -575,7 +575,7 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
 				num = 0;
 			}
 		} else if (playh) {
-			ast_copy_string(fn, "digits/hundred", sizeof(fn));
+			ast_copy_string(fn, "digits/hundred&", sizeof(fn));
 			playh = 0;
 		} else if (num < 20) {
 			snprintf(fn, sizeof(fn), "digits/%d", num);
