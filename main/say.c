@@ -585,7 +585,7 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
             if (num < 100) {
                 int ones = num % 10;
                 if (ones) {
-                    fnrecurse = get_number_str_yi(ones, lang)
+                    fnrecurse = get_number_str_yi(ones, lang);
                     if (!fnrecurse) {
                         ast_log(LOG_ERROR, "Couldn't get string for num\n");
                     } else {
