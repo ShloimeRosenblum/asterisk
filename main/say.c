@@ -585,7 +585,7 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
             if (num < 100) {
                 int ones = num % 10;
                 if (ones) {
-                    fnrecurse = get_number_str_yi(ones, language)
+                    fnrecurse = get_number_str_yi(ones, lang)
                     if (!fnrecurse) {
                         ast_log(LOG_ERROR, "Couldn't get string for num\n");
                     } else {
@@ -607,7 +607,7 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
             } else {
                 if (num < 1000000) { /* 1,000,000 */
                     if(num >= 2000){
-                        fnrecurse = get_number_str_yi((num / 1000), language);
+                        fnrecurse = get_number_str_yi((num / 1000), lang);
                         if (!fnrecurse) {
                             ast_log(LOG_ERROR, "Couldn't get string for num\n");
                         } else {
@@ -619,7 +619,7 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
                     snprintf(fn, sizeof(fn), "&digits/thousand");
                 } else {
                     if (num < 1000000000) {	/* 1,000,000,000 */
-                        fnrecurse = get_number_str_yi((num / 1000000), language);
+                        fnrecurse = get_number_str_yi((num / 1000000), lang);
                         if (!fnrecurse) {
                             ast_log(LOG_ERROR, "Couldn't get string for num\n");
                         } else {
