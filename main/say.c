@@ -548,19 +548,19 @@ static struct ast_str* get_number_str_en(int num, const char *lang)
 
 static struct ast_str* get_number_str_yi(int num, const char *lang)
 {
-    const char *fnr;
-	int loops = 0;
+    	const char *fnr;
+    	int loops = 0;
 
-	int res = 0;
-	int playh = 0;
-	char fn[256] = "";
+    	int res = 0;
+    	int playh = 0;
+    	char fn[256] = "";
 
-    struct ast_str *filenames;
+    	struct ast_str *filenames;
 
 	if (!num)
 		return ast_get_digit_str("0", lang);
 
-    filenames = ast_str_create(20);
+    	filenames = ast_str_create(20);
 	if (!filenames) {
 		return NULL;
 	}
@@ -592,7 +592,8 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
                         fnr = ast_str_buffer(fnrecurse);
                         ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s"), fnr);
                     }
-                    snprintf(fn, sizeof(fn), "digits/and&");
+		    ast_copy_string(fn, "digits/and", sizeof(fn));
+                    //snprintf(fn, sizeof(fn), "digits/and&");
                     num -= ones;
                 } else {
                     snprintf(fn, sizeof(fn), "digits/%d", num);
