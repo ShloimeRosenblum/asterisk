@@ -557,10 +557,11 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
 
     struct ast_str *filenames;
 
-	if (!num)
+	if (!num) {
 		return ast_get_digit_str("0", lang);
+	}
 
-    filenames = ast_str_create(20);
+    	filenames = ast_str_create(20);
 	if (!filenames) {
 		return NULL;
 	}
@@ -575,41 +576,42 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
 				num = 0;
 			}
 		} else if (playh) {
-			ast_copy_string(fn, "digits/hundred&", sizeof(fn));
+			ast_copy_string(fn, "digits/hundred", sizeof(fn));
 			playh = 0;
 		} else if (num < 20) {
 			snprintf(fn, sizeof(fn), "digits/%d", num);
 			num = 0;
 		}  else {
-            struct ast_str *fnrecurse = NULL;
-            if (num < 100) {
-                int ones = num % 10;
-                if (ones) {
-                    fnrecurse = get_number_str_yi(ones, lang);
-                    if (!fnrecurse) {
-                        ast_log(LOG_ERROR, "Couldn't get string for num\n");
-                    } else {
-                        fnr = ast_str_buffer(fnrecurse);
-                        ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s"), fnr);
-                    }
-                    snprintf(fn, sizeof(fn), "digits/and&");
-                    num -= ones;
-                } else {
-                    snprintf(fn, sizeof(fn), "digits/%d", num);
-                    num = 0;
-                }
-            } else if (num < 1000){	
-                if(num >= 200){
-                    snprintf(fn, sizeof(fn), "digits/%d", (num/100));
-                }				
-                playh++;
-                num %= 100;
-            } else {
-                if (num < 1000000) { /* 1,000,000 */
-                    if(num >= 2000){
-                        fnrecurse = get_number_str_yi((num / 1000), lang);
-                        if (!fnrecurse) {
-                            ast_log(LOG_ERROR, "Couldn't get string for num\n");
+            	struct ast_str *fnrecurse = NULL;
+            	if (num < 100) {
+                	int ones = num % 10;
+                	if (ones) {
+                    	fnrecurse = get_number_str_yi(ones, lang);
+                    	if (!fnrecurse) {
+                        	ast_log(LOG_ERROR, "Couldn't get string for num\n");
+                    	} else {
+                        	fnr = ast_str_buffer(fnrecurse);
+                        	ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s"), fnr);
+                    	}
+			ast_copy_string(fn, "digits/and&", sizeof(fn));
+                    	//snprintf(fn, sizeof(fn), "digits/and&");
+                    		num -= ones;
+                	} else {
+                    	snprintf(fn, sizeof(fn), "digits/%d", num);
+                    	num = 0;
+                	}
+            	} else if (num < 1000){	
+                	if(num >= 200){
+                    	snprintf(fn, sizeof(fn), "digits/%d", (num/100));
+                	}				
+                	playh++;
+                	num %= 100;
+            	} else {
+                	if (num < 1000000) { /* 1,000,000 */
+                   		if(num >= 2000){
+                  	   	fnrecurse = get_number_str_yi((num / 1000), lang);
+                	    	if (!fnrecurse) {
+                	    ast_log(LOG_ERROR, "Couldn't get string for num\n");
                         } else {
                             fnr = ast_str_buffer(fnrecurse);
                             ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s"), fnr);
