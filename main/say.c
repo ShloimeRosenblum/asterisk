@@ -591,9 +591,9 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
                         	ast_log(LOG_ERROR, "Couldn't get string for num\n");
                     	} else {
                         	fnr = ast_str_buffer(fnrecurse);
-                        	ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s"), fnr);
+                        	ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s&digits/and"), fnr);
                     	}
-			ast_copy_string(fn, "digits/and&", sizeof(fn));
+			//ast_copy_string(fn, "digits/and&", sizeof(fn));
                     	//snprintf(fn, sizeof(fn), "digits/and&");
                     		num -= ones;
                 	} else {
