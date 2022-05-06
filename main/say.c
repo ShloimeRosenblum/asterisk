@@ -592,7 +592,7 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
                         fnr = ast_str_buffer(fnrecurse);
                         ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s"), fnr);
                     }
-                    snprintf(fn, sizeof(fn), "&digits/and");
+                    snprintf(fn, sizeof(fn), "digits/and&");
                     num -= ones;
                 } else {
                     snprintf(fn, sizeof(fn), "digits/%d", num);
