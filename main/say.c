@@ -561,7 +561,7 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
 		return ast_get_digit_str("0", lang);
 	}
 
-    	filenames = ast_str_create(20);
+    filenames = ast_str_create(20);
 	if (!filenames) {
 		return NULL;
 	}
@@ -591,15 +591,12 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
                         	ast_log(LOG_ERROR, "Couldn't get string for num\n");
                     	} else {
                         	fnr = ast_str_buffer(fnrecurse);
-                        	ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s&digits/and&"), fnr);
+                        	ast_str_append(&filenames, 0, "&%s&digits/and&", fnr);
                     	}
-			//ast_copy_string(fn, "digits/and&", sizeof(fn));
-                    	//snprintf(fn, sizeof(fn), "digits/and&");
-                    		num -= ones;
-                	} else {
-                    	snprintf(fn, sizeof(fn), "digits/%d", num);
-                    	num = 0;
+                    	num -= ones;
                 	}
+                    snprintf(fn, sizeof(fn), (ones == 0 ? "&digits/%d" : "digits/%d"), num);
+                    num = 0;
             	} else if (num < 1000){	
                 	if(num >= 200){
                     	snprintf(fn, sizeof(fn), "digits/%d", (num/100));
@@ -614,11 +611,11 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
                 	    ast_log(LOG_ERROR, "Couldn't get string for num\n");
                         } else {
                             fnr = ast_str_buffer(fnrecurse);
-                            ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s"), fnr);
+                            ast_str_append(&filenames, 0, (loops == 0 ? "%s&" : "&%s&"), fnr);
                         }
                     }					
                     num %= 1000;
-                    snprintf(fn, sizeof(fn), "&digits/thousand");
+                    snprintf(fn, sizeof(fn), (num > 0 ? "digits/thousand&" : "digits/thousand"));
                 } else {
                     if (num < 1000000000) {	/* 1,000,000,000 */
                         fnrecurse = get_number_str_yi((num / 1000000), lang);
@@ -645,6 +642,7 @@ static struct ast_str* get_number_str_yi(int num, const char *lang)
 		}
 		if (!res) {
 			ast_str_append(&filenames, 0, (loops == 0 ? "%s" : "&%s"), fn);
+			ast_copy_string(fn, "", sizeof(fn));
 			loops++;
 		}
 	}
