@@ -41,6 +41,7 @@
 #include "asterisk/sorcery.h"
 #include "asterisk/file.h"
 #include "asterisk/cli.h"
+#include "asterisk/callerid.h"
 #include "asterisk/res_pjsip_cli.h"
 #include "asterisk/test.h"
 #include "asterisk/res_pjsip_presence_xml.h"
@@ -53,6 +54,7 @@
 	<depend>res_sorcery_memory</depend>
 	<depend>res_sorcery_astdb</depend>
 	<use type="module">res_statsd</use>
+	<use type="module">res_geolocation</use>
 	<support_level>core</support_level>
  ***/
 
@@ -904,6 +906,7 @@ pjsip_dialog *ast_sip_create_dialog_uac(const struct ast_sip_endpoint *endpoint,
 	/* Add the user=phone parameter if applicable */
 	ast_sip_add_usereqphone(endpoint, dlg->pool, dlg->target);
 	ast_sip_add_usereqphone(endpoint, dlg->pool, dlg->remote.info->uri);
+	ast_sip_add_usereqphone(endpoint, dlg->pool, dlg->local.info->uri);
 
 	if (!ast_strlen_zero(outbound_proxy)) {
 		pjsip_route_hdr route_set, *route;
@@ -1870,6 +1873,22 @@ int ast_sip_add_header(pjsip_tx_data *tdata, const char *name, const char *value
 	return 0;
 }
 
+pjsip_generic_string_hdr *ast_sip_add_header2(pjsip_tx_data *tdata,
+	const char *name, const char *value)
+{
+	pj_str_t hdr_name;
+	pj_str_t hdr_value;
+	pjsip_generic_string_hdr *hdr;
+
+	pj_cstr(&hdr_name, name);
+	pj_cstr(&hdr_value, value);
+
+	hdr = pjsip_generic_string_hdr_create(tdata->pool, &hdr_name, &hdr_value);
+
+	pjsip_msg_add_hdr(tdata->msg, (pjsip_hdr *) hdr);
+	return hdr;
+}
+
 static pjsip_msg_body *ast_body_to_pjsip_body(pj_pool_t *pool, const struct ast_sip_body *body)
 {
 	pj_str_t type;
@@ -2240,31 +2259,62 @@ int ast_sip_send_response(pjsip_response_addr *res_addr, pjsip_tx_data *tdata, s
 	return status == PJ_SUCCESS ? 0 : -1;
 }
 
+static void pool_destroy_callback(void *arg)
+{
+	pj_pool_t *pool = (pj_pool_t *)arg;
+	pjsip_endpt_release_pool(ast_sip_get_pjsip_endpoint(), pool);
+}
+
+static void clean_contact_from_tdata(pjsip_tx_data *tdata)
+{
+	struct ast_sip_contact *contact;
+	contact = ast_sip_mod_data_get(tdata->mod_data, supplement_module.id, MOD_DATA_CONTACT);
+	ao2_cleanup(contact);
+	ast_sip_mod_data_set(tdata->pool, tdata->mod_data, supplement_module.id, MOD_DATA_CONTACT, NULL);
+	pjsip_tx_data_dec_ref(tdata);
+}
+
 int ast_sip_send_stateful_response(pjsip_rx_data *rdata, pjsip_tx_data *tdata, struct ast_sip_endpoint *sip_endpoint)
 {
 	pjsip_transaction *tsx;
+	pj_grp_lock_t *tsx_glock;
+	pj_pool_t *pool;
 
-	if (pjsip_tsx_create_uas(NULL, rdata, &tsx) != PJ_SUCCESS) {
-		struct ast_sip_contact *contact;
-
+	/* Create and initialize global lock pool */
+	pool = pjsip_endpt_create_pool(ast_sip_get_pjsip_endpoint(), "stateful response", PJSIP_POOL_TSX_LEN, PJSIP_POOL_TSX_INC);
+	if (!pool){
 		/* ast_sip_create_response bumps the refcount of the contact and adds it to the tdata.
 		 * We'll leak that reference if we don't get rid of it here.
 		 */
-		contact = ast_sip_mod_data_get(tdata->mod_data, supplement_module.id, MOD_DATA_CONTACT);
-		ao2_cleanup(contact);
-		ast_sip_mod_data_set(tdata->pool, tdata->mod_data, supplement_module.id, MOD_DATA_CONTACT, NULL);
-		pjsip_tx_data_dec_ref(tdata);
+		clean_contact_from_tdata(tdata);
 		return -1;
 	}
-	pjsip_tsx_recv_msg(tsx, rdata);
+	/* Create with handler so that we can release the pool once the glock derefs out */
+	if(pj_grp_lock_create_w_handler(pool, NULL, pool, &pool_destroy_callback, &tsx_glock) != PJ_SUCCESS) {
+		clean_contact_from_tdata(tdata);
+		pool_destroy_callback((void *) pool);
+		return -1;
+	}
+	/* We need an additional reference as the qualify thread may destroy this out
+	 * from under us. Add it now before it gets added to the tsx. */
+	pj_grp_lock_add_ref(tsx_glock);
 
+	if (pjsip_tsx_create_uas2(NULL, rdata, tsx_glock, &tsx) != PJ_SUCCESS) {
+		clean_contact_from_tdata(tdata);
+		pj_grp_lock_dec_ref(tsx_glock);
+		return -1;
+	}
+
+	pjsip_tsx_recv_msg(tsx, rdata);
 	supplement_outgoing_response(tdata, sip_endpoint);
 
 	if (pjsip_tsx_send_msg(tsx, tdata) != PJ_SUCCESS) {
+		pj_grp_lock_dec_ref(tsx_glock);
 		pjsip_tx_data_dec_ref(tdata);
 		return -1;
 	}
 
+	pj_grp_lock_dec_ref(tsx_glock);
 	return 0;
 }
 
@@ -2401,6 +2451,234 @@ int ast_sip_call_codec_str_to_pref(struct ast_flags *pref, const char *pref_str,
 }
 
 /*!
+ * \internal
+ * \brief Set an ast_party_id name and number based on an identity header.
+ * \param hdr From, P-Asserted-Identity, or Remote-Party-ID header on incoming message
+ * \param[out] id The ID to set data on
+ */
+static void set_id_from_hdr(pjsip_fromto_hdr *hdr, struct ast_party_id *id)
+{
+	char cid_name[AST_CHANNEL_NAME];
+	char cid_num[AST_CHANNEL_NAME];
+	pjsip_name_addr *id_name_addr = (pjsip_name_addr *) hdr->uri;
+	char *semi;
+
+	ast_copy_pj_str(cid_name, &id_name_addr->display, sizeof(cid_name));
+	ast_copy_pj_str(cid_num, ast_sip_pjsip_uri_get_username(hdr->uri), sizeof(cid_num));
+
+	/* Always truncate caller-id number at a semicolon. */
+	semi = strchr(cid_num, ';');
+	if (semi) {
+		/*
+		 * We need to be able to handle URI's looking like
+		 * "sip:1235557890;phone-context=national@x.x.x.x;user=phone"
+		 *
+		 * Where the uri->user field will result in:
+		 * "1235557890;phone-context=national"
+		 *
+		 * People don't care about anything after the semicolon
+		 * showing up on their displays even though the RFC
+		 * allows the semicolon.
+		 */
+		*semi = '\0';
+	}
+
+	ast_free(id->name.str);
+	id->name.str = ast_strdup(cid_name);
+	if (!ast_strlen_zero(cid_name)) {
+		id->name.valid = 1;
+	}
+	ast_free(id->number.str);
+	id->number.str = ast_strdup(cid_num);
+	if (!ast_strlen_zero(cid_num)) {
+		id->number.valid = 1;
+	}
+}
+
+/*!
+ * \internal
+ * \brief Get a P-Asserted-Identity or Remote-Party-ID header from an incoming message
+ *
+ * This function will parse the header as if it were a From header. This allows for us
+ * to easily manipulate the URI, as well as add, modify, or remove parameters from the
+ * header
+ *
+ * \param rdata The incoming message
+ * \param header_name The name of the ID header to find
+ * \retval NULL No ID header present or unable to parse ID header
+ * \retval non-NULL The parsed ID header
+ */
+static pjsip_fromto_hdr *get_id_header(pjsip_rx_data *rdata, const pj_str_t *header_name)
+{
+	static const pj_str_t from = { "From", 4 };
+	pj_str_t header_content;
+	pjsip_fromto_hdr *parsed_hdr;
+	pjsip_generic_string_hdr *ident = pjsip_msg_find_hdr_by_name(rdata->msg_info.msg,
+			header_name, NULL);
+	int parsed_len;
+
+	if (!ident) {
+		return NULL;
+	}
+
+	pj_strdup_with_null(rdata->tp_info.pool, &header_content, &ident->hvalue);
+
+	parsed_hdr = pjsip_parse_hdr(rdata->tp_info.pool, &from, header_content.ptr,
+			pj_strlen(&header_content), &parsed_len);
+
+	if (!parsed_hdr) {
+		return NULL;
+	}
+
+	return parsed_hdr;
+}
+
+/*!
+ * \internal
+ * \brief Set an ast_party_id structure based on data in a P-Asserted-Identity header
+ *
+ * This makes use of \ref set_id_from_hdr for setting name and number. It uses
+ * the contents of a Privacy header in order to set presentation information.
+ *
+ * \param rdata The incoming message
+ * \param[out] id The ID to set
+ * \retval 0 Successfully set the party ID
+ * \retval non-zero Could not set the party ID
+ */
+static int set_id_from_pai(pjsip_rx_data *rdata, struct ast_party_id *id)
+{
+	static const pj_str_t pai_str = { "P-Asserted-Identity", 19 };
+	static const pj_str_t privacy_str = { "Privacy", 7 };
+	pjsip_fromto_hdr *pai_hdr = get_id_header(rdata, &pai_str);
+	pjsip_generic_string_hdr *privacy;
+
+	if (!pai_hdr) {
+		return -1;
+	}
+
+	set_id_from_hdr(pai_hdr, id);
+
+	if (!id->number.valid) {
+		return -1;
+	}
+
+	privacy = pjsip_msg_find_hdr_by_name(rdata->msg_info.msg, &privacy_str, NULL);
+	if (!privacy || !pj_stricmp2(&privacy->hvalue, "none")) {
+		id->number.presentation = AST_PRES_ALLOWED_USER_NUMBER_NOT_SCREENED;
+		id->name.presentation = AST_PRES_ALLOWED_USER_NUMBER_NOT_SCREENED;
+	} else {
+		id->number.presentation = AST_PRES_PROHIB_USER_NUMBER_NOT_SCREENED;
+		id->name.presentation = AST_PRES_PROHIB_USER_NUMBER_NOT_SCREENED;
+	}
+
+	return 0;
+}
+
+/*!
+ * \internal
+ * \brief Set an ast_party_id structure based on data in a Remote-Party-ID header
+ *
+ * This makes use of \ref set_id_from_hdr for setting name and number. It uses
+ * the privacy and screen parameters in order to set presentation information.
+ *
+ * \param rdata The incoming message
+ * \param[out] id The ID to set
+ * \retval 0 Succesfully set the party ID
+ * \retval non-zero Could not set the party ID
+ */
+static int set_id_from_rpid(pjsip_rx_data *rdata, struct ast_party_id *id)
+{
+	static const pj_str_t rpid_str = { "Remote-Party-ID", 15 };
+	static const pj_str_t privacy_str = { "privacy", 7 };
+	static const pj_str_t screen_str = { "screen", 6 };
+	pjsip_fromto_hdr *rpid_hdr = get_id_header(rdata, &rpid_str);
+	pjsip_param *screen;
+	pjsip_param *privacy;
+
+	if (!rpid_hdr) {
+		return -1;
+	}
+
+	set_id_from_hdr(rpid_hdr, id);
+
+	if (!id->number.valid) {
+		return -1;
+	}
+
+	privacy = pjsip_param_find(&rpid_hdr->other_param, &privacy_str);
+	screen = pjsip_param_find(&rpid_hdr->other_param, &screen_str);
+	if (privacy && !pj_stricmp2(&privacy->value, "full")) {
+		id->number.presentation = AST_PRES_RESTRICTED;
+		id->name.presentation = AST_PRES_RESTRICTED;
+	} else {
+		id->number.presentation = AST_PRES_ALLOWED;
+		id->name.presentation = AST_PRES_ALLOWED;
+	}
+	if (screen && !pj_stricmp2(&screen->value, "yes")) {
+		id->number.presentation |= AST_PRES_USER_NUMBER_PASSED_SCREEN;
+		id->name.presentation |= AST_PRES_USER_NUMBER_PASSED_SCREEN;
+	} else {
+		id->number.presentation |= AST_PRES_USER_NUMBER_UNSCREENED;
+		id->name.presentation |= AST_PRES_USER_NUMBER_UNSCREENED;
+	}
+
+	return 0;
+}
+
+/*!
+ * \internal
+ * \brief Set an ast_party_id structure based on data in a From
+ *
+ * This makes use of \ref set_id_from_hdr for setting name and number. It uses
+ * no information from the message in order to set privacy. It relies on endpoint
+ * configuration for privacy information.
+ *
+ * \param rdata The incoming message
+ * \param[out] id The ID to set
+ * \retval 0 Succesfully set the party ID
+ * \retval non-zero Could not set the party ID
+ */
+static int set_id_from_from(struct pjsip_rx_data *rdata, struct ast_party_id *id)
+{
+	pjsip_fromto_hdr *from = pjsip_msg_find_hdr(rdata->msg_info.msg,
+			PJSIP_H_FROM, rdata->msg_info.msg->hdr.next);
+
+	if (!from) {
+		/* This had better not happen */
+		return -1;
+	}
+
+	set_id_from_hdr(from, id);
+
+	if (!id->number.valid) {
+		return -1;
+	}
+
+	return 0;
+}
+
+int ast_sip_set_id_connected_line(struct pjsip_rx_data *rdata, struct ast_party_id *id)
+{
+	return !set_id_from_pai(rdata, id) || !set_id_from_rpid(rdata, id) ? 0 : -1;
+}
+
+int ast_sip_set_id_from_invite(struct pjsip_rx_data *rdata, struct ast_party_id *id, struct ast_party_id *default_id, int trust_inbound)
+{
+	if (trust_inbound && (!set_id_from_pai(rdata, id) || !set_id_from_rpid(rdata, id))) {
+		/* Trusted: Check PAI and RPID */
+		ast_free(id->tag);
+		id->tag = ast_strdup(default_id->tag);
+		return 0;
+	}
+	/* Not trusted: check the endpoint config or use From. */
+	ast_party_id_copy(id, default_id);
+	if (!default_id->number.valid) {
+		set_id_from_from(rdata, id);
+	}
+	return 0;
+}
+
+/*!
  * \brief Set name and number information on an identity header.
  *
  * \param pool Memory pool to use for string duplication
@@ -2453,6 +2731,69 @@ long ast_sip_threadpool_queue_size(void)
 struct ast_threadpool *ast_sip_threadpool(void)
 {
 	return sip_threadpool;
+}
+
+int ast_sip_is_uri_sip_sips(pjsip_uri *uri)
+{
+	return (PJSIP_URI_SCHEME_IS_SIP(uri) || PJSIP_URI_SCHEME_IS_SIPS(uri));
+}
+
+int ast_sip_is_allowed_uri(pjsip_uri *uri)
+{
+	return (ast_sip_is_uri_sip_sips(uri) || PJSIP_URI_SCHEME_IS_TEL(uri));
+}
+
+const pj_str_t *ast_sip_pjsip_uri_get_username(pjsip_uri *uri)
+{
+	if (ast_sip_is_uri_sip_sips(uri)) {
+		pjsip_sip_uri *sip_uri = pjsip_uri_get_uri(uri);
+		if (!sip_uri) {
+			return &AST_PJ_STR_EMPTY;
+		}
+		return &sip_uri->user;
+	} else if (PJSIP_URI_SCHEME_IS_TEL(uri)) {
+		pjsip_tel_uri *tel_uri = pjsip_uri_get_uri(uri);
+		if (!tel_uri) {
+			return &AST_PJ_STR_EMPTY;
+		}
+		return &tel_uri->number;
+	}
+
+	return &AST_PJ_STR_EMPTY;
+}
+
+const pj_str_t *ast_sip_pjsip_uri_get_hostname(pjsip_uri *uri)
+{
+	if (ast_sip_is_uri_sip_sips(uri)) {
+		pjsip_sip_uri *sip_uri = pjsip_uri_get_uri(uri);
+		if (!sip_uri) {
+			return &AST_PJ_STR_EMPTY;
+		}
+		return &sip_uri->host;
+	} else if (PJSIP_URI_SCHEME_IS_TEL(uri)) {
+		return &AST_PJ_STR_EMPTY;
+	}
+
+	return &AST_PJ_STR_EMPTY;
+}
+
+struct pjsip_param *ast_sip_pjsip_uri_get_other_param(pjsip_uri *uri, const pj_str_t *param_str)
+{
+	if (ast_sip_is_uri_sip_sips(uri)) {
+		pjsip_sip_uri *sip_uri = pjsip_uri_get_uri(uri);
+		if (!sip_uri) {
+			return NULL;
+		}
+		return pjsip_param_find(&sip_uri->other_param, param_str);
+	} else if (PJSIP_URI_SCHEME_IS_TEL(uri)) {
+		pjsip_tel_uri *tel_uri = pjsip_uri_get_uri(uri);
+		if (!tel_uri) {
+			return NULL;
+		}
+		return pjsip_param_find(&tel_uri->other_param, param_str);
+	}
+
+	return NULL;
 }
 
 #ifdef TEST_FRAMEWORK
@@ -2749,6 +3090,14 @@ static int load_module(void)
 		goto error;
 	}
 
+	/*
+	 * It is OK to prune the contacts now that
+	 * ast_res_pjsip_init_options_handling() has added the contact observer
+	 * of res/res_pjsip/pjsip_options.c to sorcery (to ensure that any
+	 * pruned contacts are removed from this module's data structure).
+	 */
+	ast_sip_location_prune_boot_contacts();
+
 	if (ast_res_pjsip_init_message_filter()) {
 		ast_log(LOG_ERROR, "Failed to initialize message IP updating. Aborting load\n");
 		goto error;
@@ -2810,5 +3159,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_GLOBAL_SYMBOLS | AST_MODFLAG_LOAD_
 	.reload = reload_module,
 	.load_pri = AST_MODPRI_CHANNEL_DEPEND - 5,
 	.requires = "dnsmgr,res_pjproject,res_sorcery_config,res_sorcery_memory,res_sorcery_astdb",
-	.optional_modules = "res_statsd",
+	.optional_modules = "res_geolocation,res_statsd",
 );

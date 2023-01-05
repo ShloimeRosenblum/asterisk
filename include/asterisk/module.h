@@ -242,7 +242,7 @@ int ast_update_module_list_condition(int (*modentry)(const char *module, const c
 
 /*!
  * \brief Check if module with the name given is loaded
- * \param name Module name, like "chan_sip.so"
+ * \param name Module name, like "chan_pjsip.so"
  * \retval 1 if true
  * \retval 0 if false
  */
@@ -283,7 +283,7 @@ int ast_loader_unregister(int (*updater)(void));
  * \param type The type of action that will be performed by CLI.
  *
  * \retval A possible completion of the partial match.
- * \retval NULL if no matches were found.
+ * \retval NULL if no matches were found or Asterisk is not yet fully booted.
  */
 char *ast_module_helper(const char *line, const char *word, int pos, int state, int rpos, enum ast_module_helper_type type);
 

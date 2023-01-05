@@ -1471,18 +1471,13 @@ static int update_connected_line_information(void *data)
 	return 0;
 }
 
-/*! \brief Callback which changes the value of locally held on the media stream */
-static void local_hold_set_state(struct ast_sip_session_media *session_media, unsigned int held)
-{
-	if (session_media) {
-		session_media->locally_held = held;
-	}
-}
-
 /*! \brief Update local hold state and send a re-INVITE with the new SDP */
 static int remote_send_hold_refresh(struct ast_sip_session *session, unsigned int held)
 {
-	AST_VECTOR_CALLBACK_VOID(&session->active_media_state->sessions, local_hold_set_state, held);
+	struct ast_sip_session_media *session_media = session->active_media_state->default_session[AST_MEDIA_TYPE_AUDIO];
+	if (session_media) {
+		session_media->locally_held = held;
+	}
 	ast_sip_session_refresh(session, NULL, NULL, NULL, AST_SIP_SESSION_REFRESH_METHOD_INVITE, 1, NULL);
 	ao2_ref(session, -1);
 
@@ -2518,6 +2513,15 @@ static int hangup(void *data)
 		if (session) {
 			int cause = h_data->cause;
 
+			if (channel->session->active_media_state &&
+				channel->session->active_media_state->default_session[AST_MEDIA_TYPE_AUDIO]) {
+				struct ast_sip_session_media *media =
+					channel->session->active_media_state->default_session[AST_MEDIA_TYPE_AUDIO];
+				if (media->rtp) {
+					ast_rtp_instance_set_stats_vars(ast, media->rtp);
+				}
+			}
+
 			/*
 	 		* It's possible that session_terminate might cause the session to be destroyed
 	 		* immediately so we need to keep a reference to it so we can NULL session->channel
@@ -2998,6 +3002,16 @@ static void chan_pjsip_session_end(struct ast_sip_session *session)
 		SCOPE_EXIT_RTN("No channel\n");
 	}
 
+
+	if (session->active_media_state &&
+		session->active_media_state->default_session[AST_MEDIA_TYPE_AUDIO]) {
+		struct ast_sip_session_media *media =
+			session->active_media_state->default_session[AST_MEDIA_TYPE_AUDIO];
+		if (media->rtp) {
+			ast_rtp_instance_set_stats_vars(session->channel, media->rtp);
+		}
+	}
+
 	chan_pjsip_remove_hold(ast_channel_uniqueid(session->channel));
 
 	ast_set_hangupsource(session->channel, ast_channel_name(session->channel), 0);
@@ -3014,11 +3028,11 @@ static void chan_pjsip_session_end(struct ast_sip_session *session)
 
 static void set_sipdomain_variable(struct ast_sip_session *session)
 {
-	pjsip_sip_uri *sip_ruri = pjsip_uri_get_uri(session->request_uri);
-	size_t size = pj_strlen(&sip_ruri->host) + 1;
+	const pj_str_t *host = ast_sip_pjsip_uri_get_hostname(session->request_uri);
+	size_t size = pj_strlen(host) + 1;
 	char *domain = ast_alloca(size);
 
-	ast_copy_pj_str(domain, &sip_ruri->host, size);
+	ast_copy_pj_str(domain, host, size);
 
 	pbx_builtin_setvar_helper(session->channel, "SIPDOMAIN", domain);
 	return;

@@ -136,7 +136,7 @@ AST_TEST_DEFINE(transport_connect_fail)
 
 	aeap_transport_destroy(transport);
 
-	/* Test invalid protocol */
+	/* /\* Test invalid protocol *\/ */
 	ast_test_validate(test, (transport = aeap_transport_create(TRANSPORT_URL)));
 
 	ast_test_validate(test, aeap_transport_connect(transport,

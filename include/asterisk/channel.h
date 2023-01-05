@@ -616,7 +616,7 @@ struct ast_msg_data;
  * Structure to describe a channel "technology", ie a channel driver
  * See for examples:
  * \arg chan_iax2.c - The Inter-Asterisk exchange protocol
- * \arg chan_sip.c - The SIP channel driver
+ * \arg chan_pjsip.c - The SIP channel driver
  * \arg chan_dahdi.c - PSTN connectivity (TDM, PRI, T1/E1, FXO, FXS)
  *
  * \details
@@ -4112,8 +4112,6 @@ struct ast_channel_monitor {
 };
 
 /* ACCESSOR FUNCTIONS */
-/*! \brief Set the channel name */
-void ast_channel_name_set(struct ast_channel *chan, const char *name);
 
 #define DECLARE_STRINGFIELD_SETTERS_FOR(field)	\
 	void ast_channel_##field##_set(struct ast_channel *chan, const char *field); \

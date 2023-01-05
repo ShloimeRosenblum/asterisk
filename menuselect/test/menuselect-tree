@@ -88,10 +88,6 @@
 </member>
 <member name="app_mp3" displayname="Silly MP3 Application" remove_on_change="apps/app_mp3.o apps/app_mp3.so">
 </member>
-<member name="app_osplookup" displayname="Open Settlement Protocol Applications" remove_on_change="apps/app_osplookup.o apps/app_osplookup.so">
-	<depend>osptk</depend>
-	<depend>ssl</depend>
-</member>
 <member name="app_page" displayname="Page Multiple Phones" remove_on_change="apps/app_page.o apps/app_page.so">
 	<depend name="dahdi">DAHDI</depend>
 	<depend>app_meetme</depend>
@@ -197,9 +193,6 @@
 <member name="chan_agent" displayname="Agent Proxy Channel" remove_on_change="channels/chan_agent.o channels/chan_agent.so">
         <depend>chan_local</depend>
 </member>
-<member name="chan_alsa" displayname="ALSA Console Channel Driver" remove_on_change="channels/chan_alsa.o channels/chan_alsa.so">
-	<depend>asound</depend>
-</member>
 <member name="chan_console" displayname="Console Channel Driver" remove_on_change="channels/chan_console.o channels/chan_console.so">
 	<depend>portaudio</depend>
 </member>
@@ -231,13 +224,6 @@
 	<use>openssl</use>
 </member>
 <member name="chan_local" displayname="Local Proxy Channel (Note: used internally by other modules)" remove_on_change="channels/chan_local.o channels/chan_local.so">
-</member>
-<member name="chan_mgcp" displayname="Media Gateway Control Protocol (MGCP)" remove_on_change="channels/chan_mgcp.o channels/chan_mgcp.so">
-</member>
-<member name="chan_sip" displayname="Session Initiation Protocol (SIP)" remove_on_change="channels/chan_sip.o channels/chan_sip.so">
-        <depend>chan_local</depend>
-</member>
-<member name="chan_skinny" displayname="Skinny Client Control Protocol (Skinny)" remove_on_change="channels/chan_skinny.o channels/chan_skinny.so">
 </member>
 <member name="chan_unistim" displayname="UNISTIM Protocol (USTM)" remove_on_change="channels/chan_unistim.o channels/chan_unistim.so">
 </member>

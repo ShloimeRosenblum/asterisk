@@ -49,11 +49,23 @@
 			<parameter name="delay">
 				<para>Asterisk will wait this number of milliseconds before returning to
 				the dialplan after answering the call.</para>
+				<para>The minimum is 500 ms. To answer immediately without waiting for media,
+				use the i option.</para>
+			</parameter>
+			<parameter name="options">
+				<optionlist>
+					<option name="i">
+						<para>Answer the channel immediately without waiting for media.</para>
+					</option>
+				</optionlist>
 			</parameter>
 		</syntax>
 		<description>
 			<para>If the call has not been answered, this application will
 			answer it. Otherwise, it has no effect on the call.</para>
+			<para>By default, Asterisk will wait for media for up to 500 ms, or
+			the user specified delay, whichever is longer. If you do not want
+			to wait for media at all, use the i option.</para>
 		</description>
 		<see-also>
 			<ref type="application">Hangup</ref>
@@ -296,28 +308,6 @@
 			<ref type="application">Goto</ref>
 			<ref type="function">IFTIME</ref>
 			<ref type="function">TESTTIME</ref>
-		</see-also>
-	</application>
-	<application name="ImportVar" language="en_US">
-		<synopsis>
-			Import a variable from a channel into a new variable.
-		</synopsis>
-		<syntax argsep="=">
-			<parameter name="newvar" required="true" />
-			<parameter name="vardata" required="true">
-				<argument name="channelname" required="true" />
-				<argument name="variable" required="true" />
-			</parameter>
-		</syntax>
-		<description>
-			<para>This application imports a <replaceable>variable</replaceable> from the specified
-			<replaceable>channel</replaceable> (as opposed to the current one) and stores it as a variable
-			(<replaceable>newvar</replaceable>) in the current channel (the channel that is calling this
-			application). Variables created by this application have the same inheritance properties as those
-			created with the <literal>Set</literal> application.</para>
-		</description>
-		<see-also>
-			<ref type="application">Set</ref>
 		</see-also>
 	</application>
 	<application name="Hangup" language="en_US">
@@ -617,22 +607,6 @@
 			<ref type="function">SAYFILES</ref>
 		</see-also>
 	</application>
-	<application name="SetAMAFlags" language="en_US">
-		<synopsis>
-			Set the AMA Flags.
-		</synopsis>
-		<syntax>
-			<parameter name="flag" />
-		</syntax>
-		<description>
-			<para>This application will set the channel's AMA Flags for billing purposes.</para>
-			<warning><para>This application is deprecated. Please use the CHANNEL function instead.</para></warning>
-		</description>
-		<see-also>
-			<ref type="function">CDR</ref>
-			<ref type="function">CHANNEL</ref>
-		</see-also>
-	</application>
 	<application name="Wait" language="en_US">
 		<synopsis>
 			Waits for some time.
@@ -818,7 +792,7 @@ static int pbx_builtin_answer(struct ast_channel *chan, const char *data)
 	char *parse;
 	AST_DECLARE_APP_ARGS(args,
 		AST_APP_ARG(delay);
-		AST_APP_ARG(answer_cdr);
+		AST_APP_ARG(options);
 	);
 
 	if (ast_strlen_zero(data)) {
@@ -836,8 +810,8 @@ static int pbx_builtin_answer(struct ast_channel *chan, const char *data)
 		delay = 0;
 	}
 
-	if (!ast_strlen_zero(args.answer_cdr) && !strcasecmp(args.answer_cdr, "nocdr")) {
-		ast_log(AST_LOG_WARNING, "The nocdr option for the Answer application has been removed and is no longer supported.\n");
+	if (!ast_strlen_zero(args.options) && !strcmp(args.options, "i")) {
+		return ast_raw_answer(chan);
 	}
 
 	return __ast_answer(chan, delay);
@@ -863,34 +837,6 @@ static int pbx_builtin_incomplete(struct ast_channel *chan, const char *data)
 	ast_indicate(chan, AST_CONTROL_INCOMPLETE);
 
 	return AST_PBX_INCOMPLETE;
-}
-
-/*!
- * \ingroup applications
- */
-static int pbx_builtin_setamaflags(struct ast_channel *chan, const char *data)
-{
-	ast_log(AST_LOG_WARNING, "The SetAMAFlags application is deprecated. Please use the CHANNEL function instead.\n");
-
-	if (ast_strlen_zero(data)) {
-		ast_log(AST_LOG_WARNING, "No parameter passed to SetAMAFlags\n");
-		return 0;
-	}
-	/* Copy the AMA Flags as specified */
-	ast_channel_lock(chan);
-	if (isdigit(data[0])) {
-		int amaflags;
-		if (sscanf(data, "%30d", &amaflags) != 1) {
-			ast_log(AST_LOG_WARNING, "Unable to set AMA flags on channel %s\n", ast_channel_name(chan));
-			ast_channel_unlock(chan);
-			return 0;
-		}
-		ast_channel_amaflags_set(chan, amaflags);
-	} else {
-		ast_channel_amaflags_set(chan, ast_channel_string2amaflag(data));
-	}
-	ast_channel_unlock(chan);
-	return 0;
 }
 
 /*!
@@ -1000,7 +946,6 @@ static int pbx_builtin_execiftime(struct ast_channel *chan, const char *data)
 {
 	char *s, *appname;
 	struct ast_timing timing;
-	struct ast_app *app;
 	static const char * const usage = "ExecIfTime requires an argument:\n  <time range>,<days of week>,<days of month>,<months>[,<timezone>]?<appname>[(<appargs>)]";
 
 	if (ast_strlen_zero(data)) {
@@ -1038,13 +983,7 @@ static int pbx_builtin_execiftime(struct ast_channel *chan, const char *data)
 			ast_log(LOG_WARNING, "Failed to find closing parenthesis\n");
 	}
 
-
-	if ((app = pbx_findapp(appname))) {
-		return pbx_exec(chan, app, S_OR(s, ""));
-	} else {
-		ast_log(LOG_WARNING, "Cannot locate application %s\n", appname);
-		return -1;
-	}
+	return ast_pbx_exec_application(chan, appname, S_OR(s, ""));
 }
 
 /*!
@@ -1521,41 +1460,6 @@ static int pbx_builtin_sayphonetic(struct ast_channel *chan, const char *data)
 	return res;
 }
 
-static int pbx_builtin_importvar(struct ast_channel *chan, const char *data)
-{
-	char *name;
-	char *value;
-	char *channel;
-	char tmp[VAR_BUF_SIZE];
-	static int deprecation_warning = 0;
-
-	if (ast_strlen_zero(data)) {
-		ast_log(LOG_WARNING, "Ignoring, since there is no variable to set\n");
-		return 0;
-	}
-	tmp[0] = 0;
-	if (!deprecation_warning) {
-		ast_log(LOG_WARNING, "ImportVar is deprecated.  Please use Set(varname=${IMPORT(channel,variable)}) instead.\n");
-		deprecation_warning = 1;
-	}
-
-	value = ast_strdupa(data);
-	name = strsep(&value,"=");
-	channel = strsep(&value,",");
-	if (channel && value && name) { /*! \todo XXX should do !ast_strlen_zero(..) of the args ? */
-		struct ast_channel *chan2 = ast_channel_get_by_name(channel);
-		if (chan2) {
-			char *s = ast_alloca(strlen(value) + 4);
-			sprintf(s, "${%s}", value);
-			pbx_substitute_variables_helper(chan2, s, tmp, sizeof(tmp) - 1);
-			chan2 = ast_channel_unref(chan2);
-		}
-		pbx_builtin_setvar_helper(chan, name, tmp);
-	}
-
-	return(0);
-}
-
 /*! \brief Declaration of builtin applications */
 struct pbx_builtin {
 	char name[AST_MAX_APP];
@@ -1573,7 +1477,6 @@ struct pbx_builtin {
 	{ "Goto",           pbx_builtin_goto },
 	{ "GotoIf",         pbx_builtin_gotoif },
 	{ "GotoIfTime",     pbx_builtin_gotoiftime },
-	{ "ImportVar",      pbx_builtin_importvar },
 	{ "Hangup",         pbx_builtin_hangup },
 	{ "Incomplete",     pbx_builtin_incomplete },
 	{ "NoOp",           pbx_builtin_noop },
@@ -1588,7 +1491,6 @@ struct pbx_builtin {
 	{ "SayNumber",      pbx_builtin_saynumber },
 	{ "SayOrdinal",     pbx_builtin_sayordinal },
 	{ "SayPhonetic",    pbx_builtin_sayphonetic },
-	{ "SetAMAFlags",    pbx_builtin_setamaflags },
 	{ "Wait",           pbx_builtin_wait },
 	{ "WaitDigit",      pbx_builtin_waitdigit },
 	{ "WaitExten",      pbx_builtin_waitexten }

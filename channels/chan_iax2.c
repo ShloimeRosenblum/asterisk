@@ -226,6 +226,16 @@
 			</enum>
 		</enumlist>
 	</info>
+	<info name="Dial_Resource" language="en_US" tech="IAX2">
+		<para>The general syntax is:</para>
+		<para><literal>Dial(IAX2/[username[:password]@]peer[:port][/exten[@context]][/options]</literal></para>
+		<para>IAX2 optionally allows modifiers to be specified after the extension.</para>
+		<enumlist>
+			<enum name="a">
+				<para>Request auto answer (supporting equipment/configuration required)</para>
+			</enum>
+		</enumlist>
+	</info>
 	<manager name="IAXpeers" language="en_US">
 		<synopsis>
 			List IAX peers.
@@ -3407,7 +3417,7 @@ static int send_packet(struct iax_frame *f)
 
 	/* Called with iaxsl held */
 	if (iaxdebug) {
-		ast_debug(3, "Sending %u on %d/%d to %s\n", f->ts, callno, iaxs[callno]->peercallno, ast_sockaddr_stringify(&iaxs[callno]->addr));
+		ast_debug(8, "Sending %u on %d/%d to %s\n", f->ts, callno, iaxs[callno]->peercallno, ast_sockaddr_stringify(&iaxs[callno]->addr));
 	}
 	if (f->transfer) {
 		iax_outputframe(f, NULL, 0, &iaxs[callno]->transfer, f->datalen - sizeof(struct ast_iax2_full_hdr));
@@ -6381,14 +6391,18 @@ static void build_rand_pad(unsigned char *buf, ssize_t len)
 
 static int invalid_key(ast_aes_decrypt_key *ecx)
 {
+#ifdef HAVE_OPENSSL
 	int i;
 	for (i = 0; i < 60; i++) {
-		if (ecx->rd_key[i]) {
+		if (ecx->raw[i]) {
 			return 0; /* stop if we encounter anything non-zero */
 		}
 	}
 	/* if ast_aes_encrypt or ast_aes_decrypt is called, then we'll crash when calling AES_encrypt or AES_decrypt */
 	return -1;
+#else
+	return 0; /* Can't verify, but doesn't matter anyways */
+#endif
 }
 
 static void build_encryption_keys(const unsigned char *digest, struct chan_iax2_pvt *pvt)
@@ -10359,7 +10373,7 @@ static int socket_process_helper(struct iax2_thread *thread)
 	}
 	if (ast_test_flag64(iaxs[fr->callno], IAX_ENCRYPTED) && !decrypted) {
 		if (decrypt_frame(fr->callno, fh, &f, &res)) {
-			ast_log(LOG_NOTICE, "Packet Decrypt Failed!\n");
+			ast_log(LOG_WARNING, "Packet Decrypt Failed!\n");
 			ast_variables_destroy(ies.vars);
 			ast_mutex_unlock(&iaxsl[fr->callno]);
 			return 1;
@@ -12029,7 +12043,7 @@ immediatedial:
 		iaxs[fr->callno]->last = fr->ts;
 #if 1
 		if (iaxdebug)
-			ast_debug(3, "For call=%d, set last=%u\n", fr->callno, fr->ts);
+			ast_debug(8, "For call=%d, set last=%u\n", fr->callno, fr->ts);
 #endif
 	}
 
@@ -14214,9 +14228,7 @@ static struct iax2_dpcache *find_cache(struct ast_channel *chan, const char *dat
 {
 	struct iax2_dpcache *dp = NULL;
 	struct timeval now = ast_tvnow();
-	int x, com[2], timeout, old = 0, outfd, doabort, callno;
-	struct ast_channel *c = NULL;
-	struct ast_frame *f = NULL;
+	int x, com[2], timeout, doabort, callno;
 
 	AST_LIST_TRAVERSE_SAFE_BEGIN(&dpcache, dp, cache_list) {
 		if (ast_tvcmp(now, dp->expiry) > 0) {
@@ -14263,8 +14275,8 @@ static struct iax2_dpcache *find_cache(struct ast_channel *chan, const char *dat
 
 	/* By here we must have a dp */
 	if (dp->flags & CACHE_FLAG_PENDING) {
-		struct timeval start;
-		int ms;
+		int res;
+		struct pollfd pfd;
 		/* Okay, here it starts to get nasty.  We need a pipe now to wait
 		   for a reply to come back so long as it's pending */
 		for (x = 0; x < ARRAY_LEN(dp->waiters); x++) {
@@ -14285,35 +14297,31 @@ static struct iax2_dpcache *find_cache(struct ast_channel *chan, const char *dat
 		timeout = iaxdefaulttimeout * 1000;
 		/* Temporarily unlock */
 		AST_LIST_UNLOCK(&dpcache);
-		/* Defer any dtmf */
-		if (chan)
-			old = ast_channel_defer_dtmf(chan);
 		doabort = 0;
-		start = ast_tvnow();
-		while ((ms = ast_remaining_ms(start, timeout))) {
-			c = ast_waitfor_nandfds(&chan, chan ? 1 : 0, &com[0], 1, NULL, &outfd, &ms);
-			if (outfd > -1)
-				break;
-			if (!c)
-				continue;
-			if (!(f = ast_read(c))) {
-				doabort = 1;
-				break;
-			}
-			ast_frfree(f);
-		}
-		if (!ms) {
+
+		/* chan is in autoservice here, so do NOT service it here! */
+		pfd.fd = com[0];
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		/* Wait for pipe activity... if the channel hangs up, we'll catch it on the way out. */
+		res = ast_poll(&pfd, 1, timeout);
+		if (res < 0) {
+			ast_log(LOG_WARNING, "poll returned < 0: %s\n", strerror(errno));
+			return NULL;
+		} else if (!pfd.revents) {
 			ast_log(LOG_WARNING, "Timeout waiting for %s exten %s\n", data, exten);
 		}
+
+		if (ast_check_hangup(chan)) {
+			doabort = 1;
+		}
+
 		AST_LIST_LOCK(&dpcache);
 		dp->waiters[x] = -1;
 		close(com[1]);
 		close(com[0]);
 		if (doabort) {
-			/* Don't interpret anything, just abort.  Not sure what th epoint
-			  of undeferring dtmf on a hung up channel is but hey whatever */
-			if (!old && chan)
-				ast_channel_undefer_dtmf(chan);
+			/* Don't interpret anything, just abort. */
 			return NULL;
 		}
 		if (!(dp->flags & CACHE_FLAG_TIMEOUT)) {
@@ -14336,8 +14344,6 @@ static struct iax2_dpcache *find_cache(struct ast_channel *chan, const char *dat
 			}
 		}
 		/* Our caller will obtain the rest */
-		if (!old && chan)
-			ast_channel_undefer_dtmf(chan);
 	}
 	return dp;
 }

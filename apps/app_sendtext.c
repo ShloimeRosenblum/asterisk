@@ -113,8 +113,7 @@
 			</para>
 			<note><para>The text encoding and transmission method is completely at the
 			discretion of the channel driver.  chan_pjsip will use in-dialog SIP MESSAGE
-			messages always.  chan_sip will use T.140 via RTP if a text media type was
-			negotiated and in-dialog SIP MESSAGE messages otherwise.</para></note>
+			messages always.</para></note>
 			<para>
 			</para>
 			<para>Examples:
@@ -139,8 +138,6 @@
 			</example>
 		</description>
 		<see-also>
-			<ref type="application">SendImage</ref>
-			<ref type="application">SendURL</ref>
 			<ref type="application">ReceiveText</ref>
 		</see-also>
 	</application>
@@ -182,8 +179,6 @@
 		</description>
 		<see-also>
 			<ref type="application">SendText</ref>
-			<ref type="application">SendImage</ref>
-			<ref type="application">SendURL</ref>
 		</see-also>
 	</application>
  ***/

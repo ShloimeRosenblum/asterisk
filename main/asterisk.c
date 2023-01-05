@@ -297,7 +297,7 @@ int daemon(int, int);  /* defined in libresolv of all places */
 #define NUM_MSGS 64
 
 /*! Displayed copyright tag */
-#define COPYRIGHT_TAG "Copyright (C) 1999 - 2021, Sangoma Technologies Corporation and others."
+#define COPYRIGHT_TAG "Copyright (C) 1999 - 2022, Sangoma Technologies Corporation and others."
 
 /*! \brief Welcome message when starting a CLI interface */
 #define WELCOME_MESSAGE \
@@ -3007,6 +3007,23 @@ static char *cli_complete(EditLine *editline, int ch)
 			/* Only read 1024 bytes at a time */
 			res = read(ast_consock, mbuf + mlen, 1024);
 			if (res > 0) {
+				if (!strncmp(mbuf, "Usage:", 6)) {
+					/*
+					 * Abort on malformed tab completes
+					 * If help (tab complete) follows certain
+					 * special characters, the main Asterisk process
+					 * provides usage for the internal tab complete
+					 * helper command that the remote console processes
+					 * use.
+					 * If this happens, the AST_CLI_COMPLETE_EOF sentinel
+					 * value never gets sent. As a result, we'll just block
+					 * forever if we don't handle this case.
+					 * If we get command usage on a tab complete, then
+					 * we know this scenario just happened and we should
+					 * just silently ignore and do nothing.
+					 */
+					break;
+				}
 				mlen += res;
 				mbuf[mlen] = '\0';
 			}
@@ -3554,7 +3571,7 @@ int main(int argc, char *argv[])
 	}
 	ast_mainpid = getpid();
 
-	/* Process command-line options that effect asterisk.conf load. */
+	/* Process command-line options that affect asterisk.conf load. */
 	while ((c = getopt(argc, argv, getopt_settings)) != -1) {
 		switch (c) {
 		case 'X':
@@ -3725,13 +3742,18 @@ int main(int argc, char *argv[])
 			switch (c) {
 			/* okay to run with remote console */
 			case 'B': /* force black background */
+			case 'C': /* set config path */
 			case 'd': /* debug */
 			case 'h': /* help */
 			case 'I': /* obsolete timing option: warning already thrown if used */
 			case 'L': /* max load */
 			case 'M': /* max calls */
+			case 'm': /* mute */
+			/*! \note The q option is never used anywhere, only defined */
+			case 'q': /* quiet */
 			case 'R': /* reconnect */
 			case 'r': /* remote */
+			/*! \note Can ONLY be used with remote console */
 			case 's': /* set socket path */
 			case 'V': /* version */
 			case 'v': /* verbose */
@@ -3741,7 +3763,6 @@ int main(int argc, char *argv[])
 				break;
 			/* can only be run when Asterisk is starting */
 			case 'X': /* enables #exec for asterisk.conf only. */
-			case 'C': /* set config path */
 			case 'c': /* foreground console */
 			case 'e': /* minimum memory free */
 			case 'F': /* always fork */
@@ -3749,10 +3770,8 @@ int main(int argc, char *argv[])
 			case 'G': /* run group */
 			case 'g': /* dump core */
 			case 'i': /* init keys */
-			case 'm': /* mute */
 			case 'n': /* no color */
 			case 'p': /* high priority */
-			case 'q': /* quiet */
 			case 'T': /* timestamp */
 			case 't': /* cache record files */
 			case 'U': /* run user */
@@ -4063,7 +4082,7 @@ static void asterisk_daemon(int isroot, const char *runuser, const char *rungrou
 
 	load_astmm_phase_1();
 
-	/* Check whether high prio was succesfully set by us or some
+	/* Check whether high prio was successfully set by us or some
 	 * other incantation. */
 	if (has_priority()) {
 		ast_set_flag(&ast_options, AST_OPT_FLAG_HIGH_PRIORITY);
@@ -4250,6 +4269,7 @@ static void asterisk_daemon(int isroot, const char *runuser, const char *rungrou
 
 	/* loads the cli_permissions.conf file needed to implement cli restrictions. */
 	ast_cli_perms_init(0);
+	ast_cli_channels_init(); /* Not always safe to access CLI commands until startup is complete. */
 
 	ast_stun_init();
 
