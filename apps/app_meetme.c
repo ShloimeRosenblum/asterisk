@@ -3596,8 +3596,6 @@ static int conf_run(struct ast_channel *chan, struct ast_conference *conf, struc
 		ast_channel_lock(chan);
 		if ((tmpvar = pbx_builtin_getvar_helper(chan, "MEETME_EXIT_CONTEXT"))) {
 			ast_copy_string(exitcontext, tmpvar, sizeof(exitcontext));
-		} else if (!ast_strlen_zero(ast_channel_macrocontext(chan))) {
-			ast_copy_string(exitcontext, ast_channel_macrocontext(chan), sizeof(exitcontext));
 		} else {
 			ast_copy_string(exitcontext, ast_channel_context(chan), sizeof(exitcontext));
 		}
@@ -3680,7 +3678,7 @@ static int conf_run(struct ast_channel *chan, struct ast_conference *conf, struc
 		ast_func_write(chan, "DENOISE(rx)", "on");
 	}
 
-	retrydahdi = (strcasecmp(ast_channel_tech(chan)->type, "DAHDI") || (ast_channel_audiohooks(chan) || ast_channel_monitor(chan)) ? 1 : 0);
+	retrydahdi = (strcasecmp(ast_channel_tech(chan)->type, "DAHDI") || (ast_channel_audiohooks(chan)) ? 1 : 0);
 	user->dahdichannel = !retrydahdi;
 
  dahdiretry:
@@ -4198,14 +4196,14 @@ static int conf_run(struct ast_channel *chan, struct ast_conference *conf, struc
 			if (c) {
 				char dtmfstr[2] = "";
 
-				if (ast_channel_fd(c, 0) != origfd || (user->dahdichannel && (ast_channel_audiohooks(c) || ast_channel_monitor(c)))) {
+				if (ast_channel_fd(c, 0) != origfd || (user->dahdichannel && ast_channel_audiohooks(c))) {
 					if (using_pseudo) {
 						/* Kill old pseudo */
 						close(fd);
 						using_pseudo = 0;
 					}
 					ast_debug(1, "Ooh, something swapped out under us, starting over\n");
-					retrydahdi = (strcasecmp(ast_channel_tech(c)->type, "DAHDI") || (ast_channel_audiohooks(c) || ast_channel_monitor(c)) ? 1 : 0);
+					retrydahdi = (strcasecmp(ast_channel_tech(c)->type, "DAHDI") || ast_channel_audiohooks(c) ? 1 : 0);
 					user->dahdichannel = !retrydahdi;
 					goto dahdiretry;
 				}

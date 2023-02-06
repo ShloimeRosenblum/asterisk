@@ -1310,9 +1310,9 @@ static int ast_channel_by_exten_cb(void *obj, void *arg, void *data, int flags)
 	}
 
 	ast_channel_lock(chan);
-	if (strcasecmp(ast_channel_context(chan), context) && strcasecmp(ast_channel_macrocontext(chan), context)) {
+	if (strcasecmp(ast_channel_context(chan), context)) {
 		ret = 0; /* Context match failed, continue */
-	} else if (strcasecmp(ast_channel_exten(chan), exten) && strcasecmp(ast_channel_macroexten(chan), exten)) {
+	} else if (strcasecmp(ast_channel_exten(chan), exten)) {
 		ret = 0; /* Extension match failed, continue */
 	}
 	ast_channel_unlock(chan);
@@ -2195,11 +2195,6 @@ static void ast_channel_destructor(void *obj)
 
 	ast_debug(1, "Channel %p '%s' destroying\n", chan, ast_channel_name(chan));
 
-	/* Stop monitoring */
-	if (ast_channel_monitor(chan)) {
-		ast_channel_monitor(chan)->stop(chan, 0);
-	}
-
 	/* If there is native format music-on-hold state, free it */
 	if (ast_channel_music_state(chan)) {
 		ast_moh_cleanup(chan);
@@ -2516,15 +2511,13 @@ void ast_set_hangupsource(struct ast_channel *chan, const char *source, int forc
 
 int ast_channel_has_audio_frame_or_monitor(struct ast_channel *chan)
 {
-	return ast_channel_monitor(chan)
-		|| !ast_audiohook_write_list_empty(ast_channel_audiohooks(chan))
+	return !ast_audiohook_write_list_empty(ast_channel_audiohooks(chan))
 		|| !ast_framehook_list_contains_no_active(ast_channel_framehooks(chan));
 }
 
 int ast_channel_has_hook_requiring_audio(struct ast_channel *chan)
 {
-	return ast_channel_monitor(chan)
-		|| !ast_audiohook_write_list_empty(ast_channel_audiohooks(chan))
+	return !ast_audiohook_write_list_empty(ast_channel_audiohooks(chan))
 		|| !ast_framehook_list_contains_no_active_of_type(ast_channel_framehooks(chan), AST_FRAME_VOICE);
 }
 
@@ -3841,8 +3834,7 @@ static struct ast_frame *__ast_read(struct ast_channel *chan, int dropaudio, int
 						break;
 					}
 					ast_channel_unlock(chan);
-					if (ast_channel_connected_line_sub(NULL, chan, &connected, 0) &&
-						ast_channel_connected_line_macro(NULL, chan, &connected, 1, 0)) {
+					if (ast_channel_connected_line_sub(NULL, chan, &connected, 0)) {
 						ast_indicate_data(chan, AST_CONTROL_CONNECTED_LINE,
 							read_action_payload->payload,
 							read_action_payload->payload_size);
@@ -4162,40 +4154,6 @@ static struct ast_frame *__ast_read(struct ast_channel *chan, int dropaudio, int
 				f = ast_audiohook_write_list(chan, ast_channel_audiohooks(chan), AST_AUDIOHOOK_DIRECTION_READ, f);
 				if (old_frame != f) {
 					ast_frfree(old_frame);
-				}
-			}
-
-			if (ast_channel_monitor(chan) && ast_channel_monitor(chan)->read_stream) {
-				/* XXX what does this do ? */
-#ifndef MONITOR_CONSTANT_DELAY
-				int jump = ast_channel_outsmpl(chan) - ast_channel_insmpl(chan) - 4 * f->samples;
-				if (jump >= 0) {
-					jump = calc_monitor_jump((ast_channel_outsmpl(chan) - ast_channel_insmpl(chan)),
-						ast_format_get_sample_rate(f->subclass.format),
-						ast_format_get_sample_rate(ast_channel_monitor(chan)->read_stream->fmt->format));
-					if (ast_seekstream(ast_channel_monitor(chan)->read_stream, jump, SEEK_FORCECUR) == -1) {
-						ast_log(LOG_WARNING, "Failed to perform seek in monitoring read stream, synchronization between the files may be broken\n");
-					}
-					ast_channel_insmpl_set(chan, ast_channel_insmpl(chan) + (ast_channel_outsmpl(chan) - ast_channel_insmpl(chan)) + f->samples);
-				} else {
-					ast_channel_insmpl_set(chan, ast_channel_insmpl(chan) + f->samples);
-				}
-#else
-				int jump = calc_monitor_jump((ast_channel_outsmpl(chan) - ast_channel_insmpl(chan)),
-					ast_format_get_sample_rate(f->subclass.format),
-					ast_format_get_sample_rate(ast_channel_monitor(chan)->read_stream->fmt->format));
-				if (jump - MONITOR_DELAY >= 0) {
-					if (ast_seekstream(ast_channel_monitor(chan)->read_stream, jump - f->samples, SEEK_FORCECUR) == -1) {
-						ast_log(LOG_WARNING, "Failed to perform seek in monitoring read stream, synchronization between the files may be broken\n");
-					}
-					ast_channel_insmpl(chan) += ast_channel_outsmpl(chan) - ast_channel_insmpl(chan);
-				} else {
-					ast_channel_insmpl(chan) += f->samples;
-				}
-#endif
-				if (ast_channel_monitor(chan)->state == AST_MONITOR_RUNNING) {
-					if (ast_writestream(ast_channel_monitor(chan)->read_stream, f) < 0)
-						ast_log(LOG_WARNING, "Failed to write data to channel monitor read stream\n");
 				}
 			}
 
@@ -5441,48 +5399,6 @@ int ast_write_stream(struct ast_channel *chan, int stream_num, struct ast_frame 
 			}
 		}
 
-		/* If Monitor is running on this channel, then we have to write frames out there too */
-		/* the translator on chan->writetrans may have returned multiple frames
-		   from the single frame we passed in; if so, feed each one of them to the
-		   monitor */
-		if ((stream == default_stream) && ast_channel_monitor(chan) && ast_channel_monitor(chan)->write_stream) {
-			struct ast_frame *cur;
-
-			for (cur = f; cur; cur = AST_LIST_NEXT(cur, frame_list)) {
-			/* XXX must explain this code */
-#ifndef MONITOR_CONSTANT_DELAY
-				int jump = ast_channel_insmpl(chan) - ast_channel_outsmpl(chan) - 4 * cur->samples;
-				if (jump >= 0) {
-					jump = calc_monitor_jump((ast_channel_insmpl(chan) - ast_channel_outsmpl(chan)),
-					                         ast_format_get_sample_rate(f->subclass.format),
-					                         ast_format_get_sample_rate(ast_channel_monitor(chan)->write_stream->fmt->format));
-					if (ast_seekstream(ast_channel_monitor(chan)->write_stream, jump, SEEK_FORCECUR) == -1) {
-						ast_log(LOG_WARNING, "Failed to perform seek in monitoring write stream, synchronization between the files may be broken\n");
-					}
-					ast_channel_outsmpl_set(chan, ast_channel_outsmpl(chan) + (ast_channel_insmpl(chan) - ast_channel_outsmpl(chan)) + cur->samples);
-				} else {
-					ast_channel_outsmpl_set(chan, ast_channel_outsmpl(chan) + cur->samples);
-				}
-#else
-				int jump = calc_monitor_jump((ast_channel_insmpl(chan) - ast_channel_outsmpl(chan)),
-				                             ast_format_get_sample_rate(f->subclass.format),
-				                             ast_format_get_sample_rate(ast_channel_monitor(chan)->write_stream->fmt->format));
-				if (jump - MONITOR_DELAY >= 0) {
-					if (ast_seekstream(ast_channel_monitor(chan)->write_stream, jump - cur->samples, SEEK_FORCECUR) == -1) {
-						ast_log(LOG_WARNING, "Failed to perform seek in monitoring write stream, synchronization between the files may be broken\n");
-					}
-					ast_channel_outsmpl_set(chan, ast_channel_outsmpl(chan) + ast_channel_insmpl(chan) - ast_channel_outsmpl(chan));
-				} else {
-					ast_channel_outsmpl_set(chan, ast_channel_outsmpl(chan) + cur->samples);
-				}
-#endif
-				if (ast_channel_monitor(chan)->state == AST_MONITOR_RUNNING) {
-					if (ast_writestream(ast_channel_monitor(chan)->write_stream, cur) < 0)
-						ast_log(LOG_WARNING, "Failed to write data to channel monitor write stream\n");
-				}
-			}
-		}
-
 		/* the translator on chan->writetrans may have returned multiple frames
 		   from the single frame we passed in; if so, feed each one of them to the
 		   channel, freeing each one after it has been written */
@@ -5957,8 +5873,7 @@ static void call_forward_inherit(struct ast_channel *new_chan, struct ast_channe
 		ast_channel_lock(orig);
 		ast_party_redirecting_copy(&redirecting, ast_channel_redirecting(orig));
 		ast_channel_unlock(orig);
-		if (ast_channel_redirecting_sub(orig, parent, &redirecting, 0) &&
-			ast_channel_redirecting_macro(orig, parent, &redirecting, 1, 0)) {
+		if (ast_channel_redirecting_sub(orig, parent, &redirecting, 0)) {
 			ast_channel_update_redirecting(parent, &redirecting, NULL);
 		}
 		ast_party_redirecting_free(&redirecting);
@@ -7131,11 +7046,6 @@ static void channel_do_masquerade(struct ast_channel *original, struct ast_chann
 			ast_clear_flag(ast_channel_flags(clonechan), AST_FLAG_DISABLE_DEVSTATE_CACHE);
 		}
 	}
-
-	/* Update the type. */
-	t_pvt = ast_channel_monitor(original);
-	ast_channel_monitor_set(original, ast_channel_monitor(clonechan));
-	ast_channel_monitor_set(clonechan, t_pvt);
 
 	/* Keep the same language.  */
 	ast_channel_language_set(original, ast_channel_language(clonechan));
@@ -10415,110 +10325,6 @@ static void channel_set_intercept_mode(int in_intercept_mode)
 int ast_channel_get_intercept_mode(void)
 {
 	return ast_threadstorage_get_ptr(&in_intercept_routine) ? 1 : 0;
-}
-
-int ast_channel_connected_line_macro(struct ast_channel *autoservice_chan, struct ast_channel *macro_chan, const void *connected_info, int is_caller, int is_frame)
-{
-	static int deprecation_warning = 0;
-	const char *macro;
-	const char *macro_args;
-	int retval;
-
-	ast_channel_lock(macro_chan);
-	macro = pbx_builtin_getvar_helper(macro_chan, is_caller
-		? "CONNECTED_LINE_CALLER_SEND_MACRO" : "CONNECTED_LINE_CALLEE_SEND_MACRO");
-	macro = ast_strdupa(S_OR(macro, ""));
-	macro_args = pbx_builtin_getvar_helper(macro_chan, is_caller
-		? "CONNECTED_LINE_CALLER_SEND_MACRO_ARGS" : "CONNECTED_LINE_CALLEE_SEND_MACRO_ARGS");
-	macro_args = ast_strdupa(S_OR(macro_args, ""));
-
-	if (ast_strlen_zero(macro)) {
-		ast_channel_unlock(macro_chan);
-		return -1;
-	}
-
-	if (!deprecation_warning) {
-		deprecation_warning = 1;
-		ast_log(LOG_WARNING, "Usage of CONNECTED_LINE_CALLE[ER]_SEND_MACRO is deprecated.  Please use CONNECTED_LINE_SEND_SUB instead.\n");
-	}
-	if (is_frame) {
-		const struct ast_frame *frame = connected_info;
-
-		ast_connected_line_parse_data(frame->data.ptr, frame->datalen, ast_channel_connected(macro_chan));
-	} else {
-		const struct ast_party_connected_line *connected = connected_info;
-
-		ast_party_connected_line_copy(ast_channel_connected(macro_chan), connected);
-	}
-	ast_channel_unlock(macro_chan);
-
-	channel_set_intercept_mode(1);
-	retval = ast_app_run_macro(autoservice_chan, macro_chan, macro, macro_args);
-	channel_set_intercept_mode(0);
-	if (!retval) {
-		struct ast_party_connected_line saved_connected;
-
-		ast_party_connected_line_init(&saved_connected);
-		ast_channel_lock(macro_chan);
-		ast_party_connected_line_copy(&saved_connected, ast_channel_connected(macro_chan));
-		ast_channel_unlock(macro_chan);
-		ast_channel_update_connected_line(macro_chan, &saved_connected, NULL);
-		ast_party_connected_line_free(&saved_connected);
-	}
-
-	return retval;
-}
-
-int ast_channel_redirecting_macro(struct ast_channel *autoservice_chan, struct ast_channel *macro_chan, const void *redirecting_info, int is_caller, int is_frame)
-{
-	static int deprecation_warning = 0;
-	const char *macro;
-	const char *macro_args;
-	int retval;
-
-	ast_channel_lock(macro_chan);
-	macro = pbx_builtin_getvar_helper(macro_chan, is_caller
-		? "REDIRECTING_CALLER_SEND_MACRO" : "REDIRECTING_CALLEE_SEND_MACRO");
-	macro = ast_strdupa(S_OR(macro, ""));
-	macro_args = pbx_builtin_getvar_helper(macro_chan, is_caller
-		? "REDIRECTING_CALLER_SEND_MACRO_ARGS" : "REDIRECTING_CALLEE_SEND_MACRO_ARGS");
-	macro_args = ast_strdupa(S_OR(macro_args, ""));
-
-	if (ast_strlen_zero(macro)) {
-		ast_channel_unlock(macro_chan);
-		return -1;
-	}
-
-	if (!deprecation_warning) {
-		deprecation_warning = 1;
-		ast_log(LOG_WARNING, "Usage of REDIRECTING_CALLE[ER]_SEND_MACRO is deprecated.  Please use REDIRECTING_SEND_SUB instead.\n");
-	}
-	if (is_frame) {
-		const struct ast_frame *frame = redirecting_info;
-
-		ast_redirecting_parse_data(frame->data.ptr, frame->datalen, ast_channel_redirecting(macro_chan));
-	} else {
-		const struct ast_party_redirecting *redirecting = redirecting_info;
-
-		ast_party_redirecting_copy(ast_channel_redirecting(macro_chan), redirecting);
-	}
-	ast_channel_unlock(macro_chan);
-
-	channel_set_intercept_mode(1);
-	retval = ast_app_run_macro(autoservice_chan, macro_chan, macro, macro_args);
-	channel_set_intercept_mode(0);
-	if (!retval) {
-		struct ast_party_redirecting saved_redirecting;
-
-		ast_party_redirecting_init(&saved_redirecting);
-		ast_channel_lock(macro_chan);
-		ast_party_redirecting_copy(&saved_redirecting, ast_channel_redirecting(macro_chan));
-		ast_channel_unlock(macro_chan);
-		ast_channel_update_redirecting(macro_chan, &saved_redirecting, NULL);
-		ast_party_redirecting_free(&saved_redirecting);
-	}
-
-	return retval;
 }
 
 int ast_channel_connected_line_sub(struct ast_channel *autoservice_chan, struct ast_channel *sub_chan, const void *connected_info, int is_frame)

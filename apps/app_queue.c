@@ -41,7 +41,6 @@
  *    - Position announcement
  *    - Abandoned/completed call counters
  *    - Failout timer passed as optional app parameter
- *    - Optional monitoring of calls, started when call is answered
  *
  * Patch Version 1.07 2003-12-24 01
  *
@@ -63,7 +62,6 @@
  */
 
 /*** MODULEINFO
-	<use type="module">res_monitor</use>
 	<support_level>core</support_level>
  ***/
 
@@ -88,7 +86,6 @@
 #include "asterisk/cli.h"
 #include "asterisk/manager.h"
 #include "asterisk/config.h"
-#include "asterisk/monitor.h"
 #include "asterisk/utils.h"
 #include "asterisk/causes.h"
 #include "asterisk/astdb.h"
@@ -177,7 +174,7 @@
 						the current extension and <emphasis>start</emphasis> execution at that location.</para>
 						<para>NOTE: Any channel variables you want the called channel to inherit from the caller channel must be
 						prefixed with one or two underbars ('_').</para>
-						<para>NOTE: Using this option from a Macro() or GoSub() might not make sense as there would be no return points.</para>
+						<para>NOTE: Using this option from a GoSub() might not make sense as there would be no return points.</para>
 					</option>
 					<option name="h">
 						<para>Allow <emphasis>callee</emphasis> to hang up by pressing <literal>*</literal>.</para>
@@ -222,14 +219,6 @@
 					<option name="T">
 						<para>Allow the <emphasis>calling</emphasis> user to transfer the call.</para>
 					</option>
-					<option name="w">
-						<para>Allow the <emphasis>called</emphasis> user to write the conversation to
-						disk via Monitor.</para>
-					</option>
-					<option name="W">
-						<para>Allow the <emphasis>calling</emphasis> user to write the conversation to
-						disk via Monitor.</para>
-					</option>
 					<option name="x">
 						<para>Allow the <emphasis>called</emphasis> user to write the conversation
 						to disk via MixMonitor.</para>
@@ -258,10 +247,6 @@
 			<parameter name="AGI">
 				<para>Will setup an AGI script to be executed on the calling party's channel once they are
 				connected to a queue member.</para>
-			</parameter>
-			<parameter name="macro">
-				<para>Will run a macro on the called party's channel (the queue member) once the parties are connected.</para>
-				<para>NOTE: Macros are deprecated, GoSub should be used instead.</para>
 			</parameter>
 			<parameter name="gosub">
 				<para>Will run a gosub on the called party's channel (the queue member)
@@ -1800,8 +1785,6 @@ struct call_queue {
 		AST_STRING_FIELD(announce);
 		/*! Exit context */
 		AST_STRING_FIELD(context);
-		/*! Macro to run upon member connection */
-		AST_STRING_FIELD(membermacro);
 		/*! Gosub to run upon member connection */
 		AST_STRING_FIELD(membergosub);
 		/*! Default rule to use if none specified in call to Queue() */
@@ -1868,7 +1851,6 @@ struct call_queue {
 	int servicelevel;                   /*!< seconds setting for servicelevel*/
 	int callscompletedinsl;             /*!< Number of calls answered with servicelevel*/
 	char monfmt[8];                     /*!< Format to use when recording calls */
-	int montype;                        /*!< Monitor type  Monitor vs. MixMonitor */
 	int count;                          /*!< How many entries */
 	int maxlen;                         /*!< Max number of entries */
 	int wrapuptime;                     /*!< Wrapup Time */
@@ -2972,7 +2954,6 @@ static void init_queue(struct call_queue *q)
 	q->setqueuevar = 0;
 	q->setqueueentryvar = 0;
 	q->autofill = autofill_default;
-	q->montype = montype_default;
 	q->monfmt[0] = '\0';
 	q->reportholdtime = 0;
 	q->wrapuptime = 0;
@@ -3345,8 +3326,6 @@ static void queue_set_param(struct call_queue *q, const char *param, const char 
 		q->setqueueentryvar = ast_true(val);
 	} else if (!strcasecmp(param, "monitor-format")) {
 		ast_copy_string(q->monfmt, val, sizeof(q->monfmt));
-	} else if (!strcasecmp(param, "membermacro")) {
-		ast_string_field_set(q, membermacro, val);
 	} else if (!strcasecmp(param, "membergosub")) {
 		ast_string_field_set(q, membergosub, val);
 	} else if (!strcasecmp(param, "queue-youarenext")) {
@@ -3456,10 +3435,6 @@ static void queue_set_param(struct call_queue *q, const char *param, const char 
 		}
 	} else if (!strcasecmp(param, "autofill")) {
 		q->autofill = ast_true(val);
-	} else if (!strcasecmp(param, "monitor-type")) {
-		if (!strcasecmp(val, "mixmonitor")) {
-			q->montype = 1;
-		}
 	} else if (!strcasecmp(param, "autopause")) {
 		q->autopause = autopause2int(val);
 	} else if (!strcasecmp(param, "autopausedelay")) {
@@ -4687,7 +4662,6 @@ static int ring_entry(struct queue_ent *qe, struct callattempt *tmp, int *busies
 	int status;
 	char tech[256];
 	char *location;
-	const char *macrocontext, *macroexten;
 	struct ast_format_cap *nativeformats;
 	RAII_VAR(struct ast_json *, blob, NULL, ast_json_unref);
 
@@ -4748,8 +4722,8 @@ static int ring_entry(struct queue_ent *qe, struct callattempt *tmp, int *busies
 			ast_channel_set_caller_event(tmp->chan, &caller, NULL);
 		} else if (!ast_strlen_zero(ast_channel_dialed(qe->chan)->number.str)) {
 			ast_set_callerid(tmp->chan, ast_channel_dialed(qe->chan)->number.str, NULL, NULL);
-		} else if (!ast_strlen_zero(S_OR(ast_channel_macroexten(qe->chan), ast_channel_exten(qe->chan)))) {
-			ast_set_callerid(tmp->chan, S_OR(ast_channel_macroexten(qe->chan), ast_channel_exten(qe->chan)), NULL, NULL);
+		} else if (!ast_strlen_zero(ast_channel_exten(qe->chan))) {
+			ast_set_callerid(tmp->chan, ast_channel_exten(qe->chan), NULL, NULL);
 		}
 		tmp->dial_callerid_absent = 1;
 	}
@@ -4769,14 +4743,8 @@ static int ring_entry(struct queue_ent *qe, struct callattempt *tmp, int *busies
 	ast_channel_adsicpe_set(tmp->chan, ast_channel_adsicpe(qe->chan));
 
 	/* Inherit context and extension */
-	macrocontext = pbx_builtin_getvar_helper(qe->chan, "MACRO_CONTEXT");
-	ast_channel_dialcontext_set(tmp->chan, ast_strlen_zero(macrocontext) ? ast_channel_context(qe->chan) : macrocontext);
-	macroexten = pbx_builtin_getvar_helper(qe->chan, "MACRO_EXTEN");
-	if (!ast_strlen_zero(macroexten)) {
-		ast_channel_exten_set(tmp->chan, macroexten);
-	} else {
-		ast_channel_exten_set(tmp->chan, ast_channel_exten(qe->chan));
-	}
+	ast_channel_dialcontext_set(tmp->chan, ast_channel_context(qe->chan));
+	ast_channel_exten_set(tmp->chan, ast_channel_exten(qe->chan));
 
 	/* Save the original channel name to detect call pickup masquerading in. */
 	tmp->orig_chan_name = ast_strdup(ast_channel_name(tmp->chan));
@@ -5120,8 +5088,7 @@ static void update_connected_line_from_peer(struct ast_channel *chan, struct ast
 	ast_connected_line_copy_from_caller(&connected_caller, ast_channel_caller(peer));
 	ast_channel_unlock(peer);
 	connected_caller.source = AST_CONNECTED_LINE_UPDATE_SOURCE_ANSWER;
-	if (ast_channel_connected_line_sub(peer, chan, &connected_caller, 0)
-		&& ast_channel_connected_line_macro(peer, chan, &connected_caller, is_caller, 0)) {
+	if (ast_channel_connected_line_sub(peer, chan, &connected_caller, 0)) {
 		ast_channel_update_connected_line(chan, &connected_caller, NULL);
 	}
 	ast_party_connected_line_free(&connected_caller);
@@ -5241,8 +5208,7 @@ static struct callattempt *wait_for_answer(struct queue_ent *qe, struct callatte
 						update_connected_line_from_peer(in, o->chan, 1);
 					} else if (!o->block_connected_update) {
 						if (o->pending_connected_update) {
-							if (ast_channel_connected_line_sub(o->chan, in, &o->connected, 0) &&
-								ast_channel_connected_line_macro(o->chan, in, &o->connected, 1, 0)) {
+							if (ast_channel_connected_line_sub(o->chan, in, &o->connected, 0)) {
 								ast_channel_update_connected_line(in, &o->connected, NULL);
 							}
 						} else if (!o->dial_callerid_absent) {
@@ -5352,7 +5318,7 @@ static struct callattempt *wait_for_answer(struct queue_ent *qe, struct callatte
 							ast_party_number_init(&ast_channel_redirecting(o->chan)->from.number);
 							ast_channel_redirecting(o->chan)->from.number.valid = 1;
 							ast_channel_redirecting(o->chan)->from.number.str =
-								ast_strdup(S_OR(ast_channel_macroexten(in), ast_channel_exten(in)));
+								ast_strdup(ast_channel_exten(in));
 						}
 
 						ast_channel_dialed(o->chan)->transit_network_select = ast_channel_dialed(in)->transit_network_select;
@@ -5371,17 +5337,13 @@ static struct callattempt *wait_for_answer(struct queue_ent *qe, struct callatte
 							 * Redirecting updates to the caller make sense only on single
 							 * call at a time strategies.
 							 *
-							 * We must unlock o->chan before calling
-							 * ast_channel_redirecting_macro, because we put o->chan into
-							 * autoservice there.  That is pretty much a guaranteed
-							 * deadlock.  This is why the handling of o->chan's lock may
-							 * seem a bit unusual here.
+							 * Need to re-evaluate if calling unlock is still required as we no longer
+							 * use macro.
 							 */
 							ast_party_redirecting_init(&redirecting);
 							ast_party_redirecting_copy(&redirecting, ast_channel_redirecting(o->chan));
 							ast_channel_unlock(o->chan);
-							if (ast_channel_redirecting_sub(o->chan, in, &redirecting, 0) &&
-								ast_channel_redirecting_macro(o->chan, in, &redirecting, 1, 0)) {
+							if (ast_channel_redirecting_sub(o->chan, in, &redirecting, 0)) {
 								ast_channel_update_redirecting(in, &redirecting, NULL);
 							}
 							ast_party_redirecting_free(&redirecting);
@@ -5430,8 +5392,7 @@ static struct callattempt *wait_for_answer(struct queue_ent *qe, struct callatte
 									update_connected_line_from_peer(in, o->chan, 1);
 								} else if (!o->block_connected_update) {
 									if (o->pending_connected_update) {
-										if (ast_channel_connected_line_sub(o->chan, in, &o->connected, 0) &&
-											ast_channel_connected_line_macro(o->chan, in, &o->connected, 1, 0)) {
+										if (ast_channel_connected_line_sub(o->chan, in, &o->connected, 0)) {
 											ast_channel_update_connected_line(in, &o->connected, NULL);
 										}
 									} else if (!o->dial_callerid_absent) {
@@ -5523,8 +5484,7 @@ static struct callattempt *wait_for_answer(struct queue_ent *qe, struct callatte
 							 */
 							o->dial_callerid_absent = 1;
 
-							if (ast_channel_connected_line_sub(o->chan, in, f, 1) &&
-								ast_channel_connected_line_macro(o->chan, in, f, 1, 1)) {
+							if (ast_channel_connected_line_sub(o->chan, in, f, 1)) {
 								ast_indicate_data(in, AST_CONTROL_CONNECTED_LINE, f->data.ptr, f->datalen);
 							}
 							break;
@@ -5554,8 +5514,7 @@ static struct callattempt *wait_for_answer(struct queue_ent *qe, struct callatte
 							}
 							ast_verb(3, "%s redirecting info has changed, passing it to %s\n",
 								ochan_name, inchan_name);
-							if (ast_channel_redirecting_sub(o->chan, in, f, 1) &&
-								ast_channel_redirecting_macro(o->chan, in, f, 1, 1)) {
+							if (ast_channel_redirecting_sub(o->chan, in, f, 1)) {
 								ast_indicate_data(in, AST_CONTROL_REDIRECTING, f->data.ptr, f->datalen);
 							}
 							break;
@@ -5636,8 +5595,7 @@ static struct callattempt *wait_for_answer(struct queue_ent *qe, struct callatte
 							ast_verb(3, "Connected line update to %s prevented.\n", ast_channel_name(o->chan));
 							break;
 						}
-						if (ast_channel_connected_line_sub(in, o->chan, f, 1) &&
-							ast_channel_connected_line_macro(in, o->chan, f, 0, 1)) {
+						if (ast_channel_connected_line_sub(in, o->chan, f, 1)) {
 							ast_indicate_data(o->chan, f->subclass.integer, f->data.ptr, f->datalen);
 						}
 						break;
@@ -5646,8 +5604,7 @@ static struct callattempt *wait_for_answer(struct queue_ent *qe, struct callatte
 							ast_verb(3, "Redirecting update to %s prevented.\n", ast_channel_name(o->chan));
 							break;
 						}
-						if (ast_channel_redirecting_sub(in, o->chan, f, 1) &&
-							ast_channel_redirecting_macro(in, o->chan, f, 0, 1)) {
+						if (ast_channel_redirecting_sub(in, o->chan, f, 1)) {
 							ast_indicate_data(o->chan, f->subclass.integer, f->data.ptr, f->datalen);
 						}
 						break;
@@ -6921,11 +6878,10 @@ static void setup_mixmonitor(struct queue_ent *qe, const char *filename)
  * \param[in,out] tries the number of times we have tried calling queue members
  * \param[out] noption set if the call to Queue() has the 'n' option set.
  * \param[in] agi the agi passed as the fifth parameter to the Queue() application
- * \param[in] macro the macro passed as the sixth parameter to the Queue() application
  * \param[in] gosub the gosub passed as the seventh parameter to the Queue() application
  * \param[in] ringing 1 if the 'r' option is set, otherwise 0
  */
-static int try_calling(struct queue_ent *qe, struct ast_flags opts, char **opt_args, char *announceoverride, const char *url, int *tries, int *noption, const char *agi, const char *macro, const char *gosub, int ringing)
+static int try_calling(struct queue_ent *qe, struct ast_flags opts, char **opt_args, char *announceoverride, const char *url, int *tries, int *noption, const char *agi, const char *gosub, int ringing)
 {
 	struct member *cur;
 	struct callattempt *outgoing = NULL; /* the list of calls we are building */
@@ -6934,7 +6890,6 @@ static int try_calling(struct queue_ent *qe, struct ast_flags opts, char **opt_a
 	char oldcontext[AST_MAX_CONTEXT]="";
 	char queuename[256]="";
 	struct ast_channel *peer;
-	struct ast_channel *which;
 	struct callattempt *lpeer;
 	struct member *member;
 	struct ast_app *application;
@@ -6947,10 +6902,8 @@ static int try_calling(struct queue_ent *qe, struct ast_flags opts, char **opt_a
 	struct ast_bridge_config bridge_config;
 	char nondataquality = 1;
 	char *agiexec = NULL;
-	char *macroexec = NULL;
 	char *gosubexec = NULL;
 	const char *monitorfilename;
-	char tmpid[256];
 	int forwardsallowed = 1;
 	int block_connected_line = 0;
 	struct ao2_iterator memi;
@@ -6959,7 +6912,6 @@ static int try_calling(struct queue_ent *qe, struct ast_flags opts, char **opt_a
 	time_t starttime;
 
 	memset(&bridge_config, 0, sizeof(bridge_config));
-	tmpid[0] = 0;
 	time(&now);
 
 	/* If we've already exceeded our timeout, then just stop
@@ -7280,53 +7232,13 @@ static int try_calling(struct queue_ent *qe, struct ast_flags opts, char **opt_a
 
 		/* Begin Monitoring */
 		if (*qe->parent->monfmt) {
-			if (!qe->parent->montype) {
-				const char *monexec;
-				ast_debug(1, "Starting Monitor as requested.\n");
-				ast_channel_lock(qe->chan);
-				if ((monexec = pbx_builtin_getvar_helper(qe->chan, "MONITOR_EXEC")) || pbx_builtin_getvar_helper(qe->chan, "MONITOR_EXEC_ARGS")) {
-					which = qe->chan;
-					monexec = monexec ? ast_strdupa(monexec) : NULL;
-				} else {
-					which = peer;
-				}
-				ast_channel_unlock(qe->chan);
-				if (monitorfilename) {
-					ast_monitor_start(which, qe->parent->monfmt, monitorfilename, 1, X_REC_IN | X_REC_OUT, NULL);
-				} else if (qe->chan) {
-					ast_monitor_start(which, qe->parent->monfmt, ast_channel_uniqueid(qe->chan), 1, X_REC_IN | X_REC_OUT, NULL);
-				} else {
-					/* Last ditch effort -- no channel, make up something */
-					snprintf(tmpid, sizeof(tmpid), "chan-%lx", (unsigned long)ast_random());
-					ast_monitor_start(which, qe->parent->monfmt, tmpid, 1, X_REC_IN | X_REC_OUT, NULL);
-				}
-				if (!ast_strlen_zero(monexec)) {
-					ast_monitor_setjoinfiles(which, 1);
-				}
-			} else {
-				setup_mixmonitor(qe, monitorfilename);
-			}
+			setup_mixmonitor(qe, monitorfilename);
 		}
 		/* Drop out of the queue at this point, to prepare for next caller */
 		leave_queue(qe);
 		if (!ast_strlen_zero(url) && ast_channel_supports_html(peer)) {
 			ast_debug(1, "app_queue: sendurl=%s.\n", url);
 			ast_channel_sendurl(peer, url);
-		}
-
-		/* run a macro for this connection if defined. The macro simply returns, no action is taken on the result */
-		/* use macro from dialplan if passed as a option, otherwise use the default queue macro */
-		if (!ast_strlen_zero(macro)) {
-			macroexec = ast_strdupa(macro);
-		} else {
-			if (qe->parent->membermacro) {
-				macroexec = ast_strdupa(qe->parent->membermacro);
-			}
-		}
-
-		if (!ast_strlen_zero(macroexec)) {
-			ast_debug(1, "app_queue: macro=%s.\n", macroexec);
-			ast_app_exec_macro(qe->chan, peer, macroexec);
 		}
 
 		/* run a gosub for this connection if defined. The gosub simply returns, no action is taken on the result */
@@ -8463,7 +8375,6 @@ static int queue_exec(struct ast_channel *chan, const char *data)
 		AST_APP_ARG(announceoverride);
 		AST_APP_ARG(queuetimeoutstr);
 		AST_APP_ARG(agi);
-		AST_APP_ARG(macro);
 		AST_APP_ARG(gosub);
 		AST_APP_ARG(rule);
 		AST_APP_ARG(position);
@@ -8475,7 +8386,7 @@ static int queue_exec(struct ast_channel *chan, const char *data)
 	int max_forwards;
 
 	if (ast_strlen_zero(data)) {
-		ast_log(LOG_WARNING, "Queue requires an argument: queuename[,options[,URL[,announceoverride[,timeout[,agi[,macro[,gosub[,rule[,position]]]]]]]]]\n");
+		ast_log(LOG_WARNING, "Queue requires an argument: queuename[,options[,URL[,announceoverride[,timeout[,agi[,gosub[,rule[,position]]]]]]]]\n");
 		return -1;
 	}
 
@@ -8491,14 +8402,13 @@ static int queue_exec(struct ast_channel *chan, const char *data)
 	parse = ast_strdupa(data);
 	AST_STANDARD_APP_ARGS(args, parse);
 
-	ast_debug(1, "queue: %s, options: %s, url: %s, announce: %s, timeout: %s, agi: %s, macro: %s, gosub: %s, rule: %s, position: %s\n",
+	ast_debug(1, "queue: %s, options: %s, url: %s, announce: %s, timeout: %s, agi: %s, gosub: %s, rule: %s, position: %s\n",
 		args.queuename,
 		S_OR(args.options, ""),
 		S_OR(args.url, ""),
 		S_OR(args.announceoverride, ""),
 		S_OR(args.queuetimeoutstr, ""),
 		S_OR(args.agi, ""),
-		S_OR(args.macro, ""),
 		S_OR(args.gosub, ""),
 		S_OR(args.rule, ""),
 		S_OR(args.position, ""));
@@ -8719,7 +8629,7 @@ check_turns:
 		}
 
 		/* Try calling all queue members for 'timeout' seconds */
-		res = try_calling(&qe, opts, opt_args, args.announceoverride, args.url, &tries, &noption, args.agi, args.macro, args.gosub, ringing);
+		res = try_calling(&qe, opts, opt_args, args.announceoverride, args.url, &tries, &noption, args.agi, args.gosub, ringing);
 		if (res) {
 			goto stop;
 		}
@@ -11847,5 +11757,4 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "True Call Queueing",
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_DEVSTATE_CONSUMER,
-	.optional_modules = "res_monitor",
 );

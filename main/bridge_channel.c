@@ -1175,8 +1175,6 @@ static int run_app_helper(struct ast_channel *chan, const char *app_name, const 
 
 	if (!strcasecmp("Gosub", app_name)) {
 		ast_app_exec_sub(NULL, chan, app_args, 0);
-	} else if (!strcasecmp("Macro", app_name)) {
-		ast_app_exec_macro(NULL, chan, app_args);
 	} else {
 		res = ast_pbx_exec_application(chan, app_name, app_args);
 	}
@@ -1628,8 +1626,6 @@ static void testsuite_notify_feature_success(struct ast_channel *chan, const cha
 			feature = "atxfer";
 		} else if (!strcmp(dtmf, featuremap->disconnect)) {
 			feature = "disconnect";
-		} else if (!strcmp(dtmf, featuremap->automon)) {
-			feature = "automon";
 		} else if (!strcmp(dtmf, featuremap->automixmon)) {
 			feature = "automixmon";
 		} else if (!strcmp(dtmf, featuremap->parkcall)) {
@@ -2263,21 +2259,16 @@ static void bridge_channel_handle_control(struct ast_bridge_channel *bridge_chan
 {
 	struct ast_channel *chan;
 	struct ast_option_header *aoh;
-	int is_caller;
 
 	chan = bridge_channel->chan;
 	switch (fr->subclass.integer) {
 	case AST_CONTROL_REDIRECTING:
-		is_caller = !ast_test_flag(ast_channel_flags(chan), AST_FLAG_OUTGOING);
-		if (ast_channel_redirecting_sub(NULL, chan, fr, 1) &&
-			ast_channel_redirecting_macro(NULL, chan, fr, is_caller, 1)) {
+		if (ast_channel_redirecting_sub(NULL, chan, fr, 1)) {
 			ast_indicate_data(chan, fr->subclass.integer, fr->data.ptr, fr->datalen);
 		}
 		break;
 	case AST_CONTROL_CONNECTED_LINE:
-		is_caller = !ast_test_flag(ast_channel_flags(chan), AST_FLAG_OUTGOING);
-		if (ast_channel_connected_line_sub(NULL, chan, fr, 1) &&
-			ast_channel_connected_line_macro(NULL, chan, fr, is_caller, 1)) {
+		if (ast_channel_connected_line_sub(NULL, chan, fr, 1)) {
 			ast_indicate_data(chan, fr->subclass.integer, fr->data.ptr, fr->datalen);
 		}
 		break;

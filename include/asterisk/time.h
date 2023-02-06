@@ -248,16 +248,16 @@ struct timeval ast_double2tv(double _td),
 {
 	struct timeval t;
 	t.tv_sec = (typeof(t.tv_sec))floor(_td);
-	t.tv_usec = (typeof(t.tv_usec))(_td - t.tv_sec) / 1000000.0;
+	t.tv_usec = (typeof(t.tv_usec)) ((_td - t.tv_sec) * 1000000.0);
 	return t;
 }
 )
 
 /*!
  * \brief Returns a double corresponding to the number of seconds
- * in the timeval _tv.
+ * in the timeval \c tv.
  *
- * \param _tv A pointer to a timeval structure.
+ * \param tv A pointer to a timeval structure.
  * \returns A double containing the number of seconds.
  *
  * This is the inverse of ast_double2tv().
@@ -265,7 +265,7 @@ struct timeval ast_double2tv(double _td),
 AST_INLINE_API(
 double ast_tv2double(const struct timeval *tv),
 {
-	return tv->tv_sec + ((double)tv->tv_usec) / 1000000.0;
+	return (((double)tv->tv_sec) + (((double)tv->tv_usec) / 1000000.0));
 }
 )
 
@@ -309,7 +309,7 @@ time_t ast_tv2samp(const struct timeval *_tv, int _rate),
  * This is the inverse of ast_sec2samp().
  */
 AST_INLINE_API(
-double ast_samp2sec(int _nsamp, unsigned int _rate),
+double ast_samp2sec(unsigned int _nsamp, unsigned int _rate),
 {
 	return ((double)_nsamp) / ((double)_rate);
 }

@@ -94,7 +94,6 @@ struct ast_channel {
 	struct ast_cdr *cdr;				/*!< Call Detail Record */
 	struct ast_tone_zone *zone;			/*!< Tone zone as set in indications.conf or
 							 *   in the CHANNEL dialplan function */
-	struct ast_channel_monitor *monitor;		/*!< Channel monitoring */
 	ast_callid callid;			/*!< Bound call identifier pointer */
 	struct ao2_container *dialed_causes;		/*!< Contains tech-specific and Asterisk cause data from dialed channels */
 
@@ -178,7 +177,6 @@ struct ast_channel {
 	enum ast_channel_state state;			/*!< State of line -- Don't write directly, use ast_setstate() */
 	int rings;					/*!< Number of rings so far */
 	int priority;					/*!< Dialplan: Current extension priority */
-	int macropriority;				/*!< Macro: Current non-macro priority. See app_macro.c */
 	int amaflags;					/*!< Set BEFORE PBX is started to determine AMA flags */
 	enum ast_channel_adsicpe adsicpe;		/*!< Whether or not ADSI is detected on CPE */
 	unsigned int fin;				/*!< Frames in counters. The high bit is a debug mask, so
@@ -208,8 +206,6 @@ struct ast_channel {
 	char exten[AST_MAX_EXTENSION];			/*!< Dialplan: Current extension number */
 	char lastcontext[AST_MAX_CONTEXT];		/*!< Dialplan: Previous extension context */
 	char lastexten[AST_MAX_EXTENSION];		/*!< Dialplan: Previous extension number */
-	char macrocontext[AST_MAX_CONTEXT];		/*!< Macro: Current non-macro context. See app_macro.c */
-	char macroexten[AST_MAX_EXTENSION];		/*!< Macro: Current non-macro extension. See app_macro.c */
 	char unbridged;							/*!< non-zero if the bridge core needs to re-evaluate the current
 											 bridging technology which is in use by this channel's bridge. */
 	char is_t38_active;						/*!< non-zero if T.38 is active on this channel. */
@@ -377,22 +373,6 @@ void ast_channel_exten_set(struct ast_channel *chan, const char *value)
 	ast_copy_string(chan->exten, value, sizeof(chan->exten));
 	ast_channel_snapshot_invalidate_segment(chan, AST_CHANNEL_SNAPSHOT_INVALIDATE_DIALPLAN);
 }
-const char *ast_channel_macrocontext(const struct ast_channel *chan)
-{
-	return chan->macrocontext;
-}
-void ast_channel_macrocontext_set(struct ast_channel *chan, const char *value)
-{
-	ast_copy_string(chan->macrocontext, value, sizeof(chan->macrocontext));
-}
-const char *ast_channel_macroexten(const struct ast_channel *chan)
-{
-	return chan->macroexten;
-}
-void ast_channel_macroexten_set(struct ast_channel *chan, const char *value)
-{
-	ast_copy_string(chan->macroexten, value, sizeof(chan->macroexten));
-}
 
 char ast_channel_dtmf_digit_to_emulate(const struct ast_channel *chan)
 {
@@ -450,14 +430,6 @@ void ast_channel_hangupcause_set(struct ast_channel *chan, int value)
 {
 	chan->hangupcause = value;
 	ast_channel_snapshot_invalidate_segment(chan, AST_CHANNEL_SNAPSHOT_INVALIDATE_HANGUP);
-}
-int ast_channel_macropriority(const struct ast_channel *chan)
-{
-	return chan->macropriority;
-}
-void ast_channel_macropriority_set(struct ast_channel *chan, int value)
-{
-	chan->macropriority = value;
 }
 int ast_channel_priority(const struct ast_channel *chan)
 {
@@ -630,14 +602,6 @@ struct ast_channel *ast_channel_masqr(const struct ast_channel *chan)
 void ast_channel_masqr_set(struct ast_channel *chan, struct ast_channel *value)
 {
 	chan->masqr = value;
-}
-struct ast_channel_monitor *ast_channel_monitor(const struct ast_channel *chan)
-{
-	return chan->monitor;
-}
-void ast_channel_monitor_set(struct ast_channel *chan, struct ast_channel_monitor *value)
-{
-	chan->monitor = value;
 }
 struct ast_filestream *ast_channel_stream(const struct ast_channel *chan)
 {

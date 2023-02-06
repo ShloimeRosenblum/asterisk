@@ -271,9 +271,9 @@ int pbx_exec(struct ast_channel *c, struct ast_app *app, const char *data);
 /*!
  * \brief Execute an application
  *
- * \param c channel to execute on
- * \param app name of app to execute
- * \param data the data passed into the app
+ * \param chan channel to execute on
+ * \param app_name name of app to execute
+ * \param app_args the data passed into the app
  *
  * This application executes an application by name on a given channel.
  * It is a wrapper around pbx_exec that will perform variable substitution
@@ -1122,30 +1122,6 @@ int ast_rdlock_context(struct ast_context *con);
  * \retval -1 on failure
  */
 int ast_unlock_context(struct ast_context *con);
-
-/*!
- * \brief locks the macrolock in the given context
- *
- * \param macrocontext name of the macro-context to lock
- *
- * Locks the given macro-context to ensure only one thread (call) can execute it at a time
- *
- * \retval 0 on success
- * \retval -1 on failure
- */
-int ast_context_lockmacro(const char *macrocontext);
-
-/*!
- * \brief Unlocks the macrolock in the given context
- *
- * \param macrocontext name of the macro-context to unlock
- *
- * Unlocks the given macro-context so that another thread (call) can execute it
- *
- * \retval 0 on success
- * \retval -1 on failure
- */
-int ast_context_unlockmacro(const char *macrocontext);
 
 /*!
  * \brief Set the channel to next execute the specified dialplan location.

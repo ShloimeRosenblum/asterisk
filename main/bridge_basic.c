@@ -414,7 +414,6 @@ static int setup_bridge_features_builtin(struct ast_bridge_features *features, s
 	res |= builtin_features_helper(features, chan, flags, AST_FEATURE_REDIRECT, "atxfer", AST_BRIDGE_BUILTIN_ATTENDEDTRANSFER);
 	res |= builtin_features_helper(features, chan, flags, AST_FEATURE_DISCONNECT, "disconnect", AST_BRIDGE_BUILTIN_HANGUP);
 	res |= builtin_features_helper(features, chan, flags, AST_FEATURE_PARKCALL, "parkcall", AST_BRIDGE_BUILTIN_PARKCALL);
-	res |= builtin_features_helper(features, chan, flags, AST_FEATURE_AUTOMON, "automon", AST_BRIDGE_BUILTIN_AUTOMON);
 	res |= builtin_features_helper(features, chan, flags, AST_FEATURE_AUTOMIXMON, "automixmon", AST_BRIDGE_BUILTIN_AUTOMIXMON);
 
 	return res ? -1 : 0;
@@ -1386,10 +1385,6 @@ static const char *get_transfer_context(struct ast_channel *transferer, const ch
 	if (!ast_strlen_zero(context)) {
 		return context;
 	}
-	context = ast_channel_macrocontext(transferer);
-	if (!ast_strlen_zero(context)) {
-		return context;
-	}
 	context = ast_channel_context(transferer);
 	if (!ast_strlen_zero(context)) {
 		return context;
@@ -1402,7 +1397,7 @@ static const char *get_transfer_context(struct ast_channel *transferer, const ch
  * \brief Determine the transfer extension to use.
  *
  * \param transferer Channel initiating the transfer.
- * \param extension User supplied extension if available.  May be NULL.
+ * \param exten User supplied extension if available.  May be NULL.
  *
  * \return The extension to use for the transfer.
  */
